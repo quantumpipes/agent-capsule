@@ -1,90 +1,66 @@
-# Installing Capsules for Claude Code
+# Installing agent-capsule
 
-This is the instruction set Claude Code follows to install the `claude-capsule`
-package (Capsules for Claude Code). You
-do not run these steps by hand; you paste the short prompt from the
-[README](README.md#install-with-claude-code-copy--paste) and Claude Code reads
-this page and does all of it. The steps are written for the agent.
+agent-capsule seals your AI coding agents' sessions into tamper-evident
+hashchains. Install the package once, then wire up whichever agents you use.
 
-The goal: seal every Claude Code session into a tamper-evident, cryptographically
-signed hashchain by installing the package and registering its hooks.
+## 1. Install the package
 
-## Steps for the agent
-
-### 1. Install the package
-
-Try `pipx` first, fall back to `pip --user`:
+Python 3.11+. The only runtime dependency is PyNaCl.
 
 ```bash
-pipx install git+https://github.com/quantumpipes/claude-capsule
+pipx install git+https://github.com/quantumpipes/agent-capsule
 # or:
-python3 -m pip install --user git+https://github.com/quantumpipes/claude-capsule
+python3 -m pip install --user git+https://github.com/quantumpipes/agent-capsule
 ```
 
-Confirm the `claude-capsule` and `claude-capsule-hook` commands are on PATH
-(e.g. `claude-capsule --help`). If they are not, find their absolute path and use
-that absolute path wherever `claude-capsule-hook` appears in step 2.
+Confirm the commands are on PATH: `agent-capsule --help`.
 
-### 2. Register the hooks
+## 2. Wire up your agents
 
-Edit `~/.claude/settings.json`. Create the file and any missing keys if needed,
-and do **not** remove or overwrite any hooks already present. Add an entry that
-runs `claude-capsule-hook` (or its absolute path from step 1) to **both** the
-`Stop` and `SessionEnd` hook events. The shape Claude Code expects:
-
-```json
-{
-  "hooks": {
-    "Stop":       [ { "hooks": [ { "type": "command", "command": "claude-capsule-hook" } ] } ],
-    "SessionEnd": [ { "hooks": [ { "type": "command", "command": "claude-capsule-hook" } ] } ]
-  }
-}
-```
-
-Merge into the existing JSON. If a `Stop` or `SessionEnd` array already exists,
-append the entry to it instead of replacing it. Validate that the JSON parses
-before saving.
-
-### 3. Verify the install end-to-end
-
-Do not wait for a real session. Pick any transcript under
-`~/.claude/projects/**/` (a `*.jsonl` file), then run:
+Each command is idempotent and never clobbers config you already have.
 
 ```bash
-claude-capsule-hook --transcript "<that file>" --session install-check --finalize
-claude-capsule verify ~/.claude-capsule/chains/install-check.db --signatures
+agent-capsule install claude-code   # ~/.claude/settings.json   Stop + SessionEnd hooks
+agent-capsule install cursor        # ~/.cursor/hooks.json       stop hook
+agent-capsule install codex         # ~/.codex/config.toml       notify program
+agent-capsule install cline         # ~/Documents/Cline/Hooks/   TaskComplete/Cancel/Start
 ```
 
-Report the verify result, then delete the throwaway chain:
+Remove a hook anytime with `agent-capsule uninstall <tool>`. Per-tool details
+(exact trigger, what is captured, caveats) live in [docs/tools/](docs/tools/).
+
+## 3. Verify it works
 
 ```bash
-rm -f ~/.claude-capsule/chains/install-check.db ~/.claude-capsule/chains/install-check.checkpoint.json
+agent-capsule list                                  # chains, grouped by tool
+agent-capsule verify <chain.db> --signatures        # recompute hashes + signatures
 ```
 
-### 4. Report back
+Chains are written to `~/.agent-capsule/chains/<tool>/<session>.db`. Your signing
+key is at `~/.agent-capsule/key` and never leaves your machine; only the public
+key is shared.
 
-Tell the user:
+---
 
-- hooks are registered for `Stop` and `SessionEnd`,
-- chains will be written to `~/.claude-capsule/chains/`,
-- and the command to browse them later:
+## Installing Claude Code with Claude Code (copy / paste)
 
-  ```bash
-  git clone https://github.com/quantumpipes/claude-capsule
-  cd claude-capsule/explorer && npm install && npm run export && npm run dev   # http://localhost:4840
-  ```
+For Claude Code specifically, you can paste this into a session and let the agent
+do everything:
 
-## Privacy
+```text
+Install agent-capsule and wire up Claude Code by fetching and following every
+step in
+https://raw.githubusercontent.com/quantumpipes/agent-capsule/main/docs/tools/claude-code.md
+Use `agent-capsule install claude-code` to register the hooks, then confirm.
+```
 
-Do not print the user's key material. The signing key at `~/.claude-capsule/key`
-is private; only the public key is ever shared. No data leaves the machine.
+## Browse your chains
 
-## Doing it without Claude Code
+The verifier is its own project,
+[capsule-explorer](https://github.com/quantumpipes/capsule-explorer):
 
 ```bash
-pipx install git+https://github.com/quantumpipes/claude-capsule
-curl -fsSL https://raw.githubusercontent.com/quantumpipes/claude-capsule/main/install.sh | bash
+agent-capsule export --out /tmp/chains
+git clone https://github.com/quantumpipes/capsule-explorer
+cd capsule-explorer && npm install && npm run export && npm run dev   # http://localhost:4840
 ```
-
-`install.sh` performs steps 1 and 2 idempotently. See the
-[README](README.md#manual-install) for the by-hand settings.json edit.

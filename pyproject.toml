@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "claude-capsule"
-version = "0.1.0"
-description = "Tamper-evident audit trail for Claude Code sessions: a hook seals every conversation into a SHA3-256 + Ed25519 hashchain you can verify in the browser, offline."
+name = "agent-capsule"
+version = "0.2.0"
+description = "Tamper-evident audit trail for AI coding agents (Claude Code, Cursor, Codex, Cline): every session sealed into a SHA3-256 + Ed25519 hashchain you can verify in the browser, offline."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-keywords = ["claude", "claude-code", "audit", "hashchain", "ed25519", "sha3", "provenance"]
+keywords = ["claude-code", "cursor", "codex", "cline", "audit", "hashchain", "ed25519", "sha3", "provenance", "ai-agents"]
 dependencies = [
     "PyNaCl>=1.5.0",
 ]
@@ -18,12 +18,20 @@ dependencies = [
 dev = ["pytest>=8.0"]
 
 [project.scripts]
-claude-capsule = "claude_capsule.cli:main"
-claude-capsule-hook = "claude_capsule.hook:main"
+# Umbrella CLI
+agent-capsule = "agent_capsule.cli:main"
+# Per-tool adapter entry points (the commands the hooks/notify call)
+agent-capsule-claude-hook = "agent_capsule.adapters.claude_code:main"
+agent-capsule-cursor-hook = "agent_capsule.adapters.cursor:main"
+agent-capsule-codex-notify = "agent_capsule.adapters.codex:main"
+agent-capsule-cline-hook = "agent_capsule.adapters.cline:main"
+# Back-compat aliases for the original claude-capsule release
+claude-capsule = "agent_capsule.cli:main"
+claude-capsule-hook = "agent_capsule.adapters.claude_code:main"
 
 [project.urls]
-Homepage = "https://github.com/quantumpipes/claude-capsule"
-Repository = "https://github.com/quantumpipes/claude-capsule"
+Homepage = "https://github.com/quantumpipes/agent-capsule"
+Repository = "https://github.com/quantumpipes/agent-capsule"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/claude_capsule"]
+packages = ["src/agent_capsule"]

@@ -1,79 +1,76 @@
 # Architecture
 
-> One sentence: a hook turns the session transcript into signed, hash-linked
-> records in SQLite; an exporter ships those records (plus the public key) to a
-> static site that re-verifies them in your browser. Everything below is detail.
-
+> One sentence: each tool's trigger hands a transcript to a thin adapter, which
+> turns it into capsule specs; a shared engine seals those into a signed,
+> hash-linked SQLite chain; a static explorer re-verifies any chain in the
+> browser. Everything below is detail.
 
 ```
-┌─────────────────────┐
-│  Claude Code session │
-└──────────┬──────────┘
-           │ Stop hook (incremental)   SessionEnd hook (final + verify)
-           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  claude_capsule.hook                                          │
-│   load_records()    parse transcript JSONL                    │
-│   build_plan()      transcript -> ordered capsule specs       │
-│   make_capsule()    spec -> six-section Capsule               │
-│   CapsuleChain.seal_and_store()  link + SHA3-256 + Ed25519    │
-└──────────┬───────────────────────────────────────────────────┘
-           ▼
-   ~/.claude-capsule/chains/<session>.db   (SQLite; one row per capsule)
-           │
-           │ claude_capsule.export  (reads columns directly, no re-serialize)
-           ▼
-   explorer/public/data/chains/{index.json, <chain>.json}
-           │
-           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Capsule Explorer (Astro + React, static)                     │
-│   data-source.ts   fetch JSON bundle                          │
-│   crypto.ts        SHA3-256 + Ed25519 re-verify in-browser    │
-│   Explorer.tsx     chains rail / timeline / detail / tamper   │
-└─────────────────────────────────────────────────────────────┘
+  Claude Code        Cursor            Codex             Cline
+  Stop/SessionEnd    stop hook         notify            TaskComplete/Cancel
+       │                │                 │                  │
+       ▼                ▼                 ▼                  ▼
+ ┌──────────────────────────────────────────────────────────────────┐
+ │  agent_capsule.adapters.<tool>   (one thin parser per tool)        │
+ │    reads the tool's transcript -> a list of capsule specs          │
+ └───────────────────────────────┬──────────────────────────────────┘
+                                  ▼
+ ┌──────────────────────────────────────────────────────────────────┐
+ │  agent_capsule.core.sealing.seal_specs(tool, session, specs)       │
+ │    spec -> six-section Capsule -> SHA3-256 -> Ed25519 -> chain     │
+ └───────────────────────────────┬──────────────────────────────────┘
+                                  ▼
+   ~/.agent-capsule/chains/<tool>/<session>.db   (SQLite, one row per capsule)
+                                  │
+                                  │ agent-capsule export
+                                  ▼
+        JSON bundle  ──▶  Capsule Explorer (re-verifies in the browser)
 ```
 
-## Modules (Python writer)
+## Packages
 
-| File | Responsibility |
-|------|----------------|
-| `capsule.py` | The `Capsule` dataclass: six sections + identity + `to_dict()` + `canonical_bytes()`. Defines the exact bytes that get hashed. |
-| `seal.py` | `Seal`: load/generate the Ed25519 key (`~/.claude-capsule/key`), `compute_hash()` (SHA3-256), `seal()` (sign), `verify()` / `verify_with_public_key()`. |
-| `storage.py` | `CapsuleStorage`: SQLite, one row per capsule, `(tenant_id, sequence)` unique. Stores the canonical bytes + seal fields as columns. |
-| `chain.py` | `CapsuleChain`: `seal_and_store()` (link to head, seal, persist) and `verify()` (hash + link + optional signature). |
-| `hook.py` | The Claude Code hook: transcript parsing, the capsule plan, idempotent appends, fail-open behavior. |
-| `export.py` | Reads SQLite into the explorer's static JSON bundle. |
-| `cli.py` | `verify` / `inspect` / `export` subcommands. |
+| Module | Responsibility |
+|--------|----------------|
+| `core/capsule.py` | The `Capsule`: six sections + identity + `to_dict()` + `canonical_bytes()`. The exact bytes that get hashed. |
+| `core/seal.py` | `Seal`: load/generate the Ed25519 key, `compute_hash()` (SHA3-256), `seal()`, `verify()`. |
+| `core/storage.py` | `CapsuleStorage`: SQLite, one row per capsule, stores the canonical bytes + seal fields as columns. |
+| `core/chain.py` | `CapsuleChain`: link to head, seal, persist, and `verify()` (hash + link + optional signature). |
+| `core/sealing.py` | The shared adapter contract: `seal_specs(tool, session, specs)` (spec -> capsule -> chain, idempotent). |
+| `core/paths.py` | Where everything lives: `~/.agent-capsule/{key, chains/<tool>/...}`. |
+| `core/export.py` | Reads the chains into the explorer's static JSON bundle, tagged by tool. |
+| `adapters/<tool>.py` | One per tool: install the trigger, parse the transcript into specs, call `seal_specs`. |
+| `cli.py` | `verify` / `inspect` / `list` / `install` / `uninstall` / `export`. |
+
+## Why adapters stay thin
+
+An adapter knows exactly two tool-specific things: the lifecycle **trigger** it
+installs, and how to **read that tool's transcript** into the spec shape (a plain
+dict per action). Everything else (building the six-section capsule, canonical
+hashing, Ed25519 signing, chain linking, idempotent re-sealing, fail-open
+logging, verification) is shared in `core`. So:
+
+- adding a tool is writing one parser, not a new crypto stack;
+- every tool produces the same kind of chain;
+- one explorer verifies all of them, byte for byte.
 
 ## Design choices
 
-**Parse the transcript, not the event.** Hooks are triggers. The `Stop`/
-`SessionEnd` event payload carries the session id and transcript path; the
-transcript JSONL is the source of truth, so the hook reads it. This captures the
-full prompt, response, tool I/O, usage, and permission mode rather than a thin
-event envelope.
+**Parse the transcript, not the event.** Triggers are signals. Each adapter reads
+the tool's own durable transcript (Claude Code JSONL, Cursor SQLite, Codex
+rollout, Cline task JSON) as the source of truth, so the capsule reflects what
+actually happened, not a thin event summary.
 
-**Store the canonical bytes.** `storage.py` persists the exact canonical string
-alongside the seal fields. `export.py` reads it verbatim. Nothing re-serializes
-the capsule after sealing, which removes any chance of canonical drift between
-writer and verifier.
+**Store the canonical bytes.** Storage persists the exact canonical string next to
+the seal fields, and export reads it verbatim, so the writer and the browser
+verifier can never disagree about bytes.
 
-**Idempotent appends.** Each capsule spec has a deterministic `key`
-(`<message-uuid>:<index>`). A per-session checkpoint file records sealed keys, so
-the `Stop` hook can fire repeatedly during a session and only append new actions.
+**Idempotent appends.** Each spec carries a stable `key`; a per-session checkpoint
+records sealed keys. A trigger can fire many times (every turn, every stop) and
+only new actions append. This is what makes Codex's per-turn notify and Cline's
+per-hook invocation safe.
 
-**Fail-open.** The hook logs to `~/.claude-capsule/hook.log` and always exits 0.
-An audit tool must never be able to break the thing it audits.
+**Fail-open.** Adapters log to `~/.agent-capsule/hook.log` and always exit 0. An
+audit tool must never be able to break the thing it audits.
 
-**Per-session chains by default.** One SQLite file per session means one
-independent chain each: simpler to reason about, share, and verify. A shared
-single-file mode (`CLAUDE_CAPSULE_DB`) groups sessions by id as `tenant_id`.
-
-## Why two verifiers agree
-
-The Python `verify` and the browser `crypto.ts` implement the **same three
-checks** over the **same canonical bytes** with the **same signature scheme**
-(Ed25519 over `utf8(hash_hex)`). The bundle ships the canonical bytes and the
-public key, so the browser needs nothing else. See
-[`wire-format.md`](wire-format.md).
+**Per-tool, per-session chains.** `chains/<tool>/<session>.db` keeps tools from
+colliding on a session id and lets one explorer show every agent side by side.

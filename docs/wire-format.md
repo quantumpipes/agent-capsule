@@ -108,7 +108,7 @@ check fails is the break point.
 
 ## Export bundle
 
-`claude-capsule export` (and the explorer's `npm run export`) write:
+`agent-capsule export` (and the explorer's `npm run export`) write:
 
 - `index.json`: `{ generated_at, public_key, fingerprint, chain_count, capsule_count, chains: [summary...] }`
 - `<chain-id>.json`: `{ id, title, length, head_hash, genesis_hash, all_hashes_ok, capsules: [ { hash, signature, signature_pq, signed_at, signed_by, canonical } ] }`
