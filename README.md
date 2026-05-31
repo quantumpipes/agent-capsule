@@ -186,14 +186,20 @@ See [SECURITY.md](SECURITY.md) for the trust model (tamper *evidence*, what the 
 
 ## Documentation
 
+Full index: [docs/](docs/). The essentials:
+
 | Doc | What's inside |
 |-----|---------------|
-| 📦 [INSTALL.md](INSTALL.md) | Install guide (and the Claude Code paste prompt) |
-| 🔧 [docs/tools/](docs/tools/) | One page per tool: trigger, capture, caveats |
+| 📦 [INSTALL.md](INSTALL.md) | Install the package and wire up each agent (and the paste prompt) |
+| 🧩 [docs/data-model.md](docs/data-model.md) | **What a capsule is**: the six sections, the seal, the chain, annotated |
 | 🧬 [docs/wire-format.md](docs/wire-format.md) | The exact bytes: canonical JSON, hashing, the signature scheme |
-| 🏗️ [docs/architecture.md](docs/architecture.md) | The shared engine + per-tool adapters |
-| 🛡️ [SECURITY.md](SECURITY.md) | Trust model and key handling |
-| 🔍 [capsule-explorer](https://github.com/quantumpipes/capsule-explorer) | The standalone in-browser verifier |
+| ✅ [docs/verify-it-yourself.md](docs/verify-it-yourself.md) | Re-derive the hash and check the signature in Python or JS, none of our code |
+| 🛡️ [docs/threat-model.md](docs/threat-model.md) | Exactly what tamper evidence guarantees, and what it does not |
+| 🏗️ [docs/architecture.md](docs/architecture.md) | The shared engine + thin per-tool adapters |
+| 🔧 [docs/tools/](docs/tools/) | One page per tool: trigger, capture, caveats |
+| ⌨️ [docs/cli.md](docs/cli.md) · [docs/faq.md](docs/faq.md) | Command reference and FAQ |
+| 🧱 [docs/writing-an-adapter.md](docs/writing-an-adapter.md) | Add support for a new agent |
+| 🔍 [capsule-explorer](https://github.com/quantumpipes/capsule-explorer) | The standalone in-browser verifier (its own repo) |
 
 ---
 

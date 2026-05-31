@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use agent-capsule, please cite it using these metadata."
+title: agent-capsule
+abstract: >
+  agent-capsule seals AI coding sessions from Claude Code, Cursor, Codex, and
+  Cline into tamper-evident SHA3-256 plus Ed25519 hashchains that anyone can
+  verify offline, in the browser, with nothing to trust but the math. One shared
+  crypto engine plus one thin adapter per tool produces a signed, hash-linked
+  record of every agent action.
+type: software
+authors:
+  - name: "Quantum Pipes Technologies, LLC"
+license: Apache-2.0
+repository-code: "https://github.com/quantumpipes/agent-capsule"
+url: "https://github.com/quantumpipes/agent-capsule"
+version: 0.2.0
+date-released: "2026-05-31"
+keywords:
+  - audit
+  - provenance
+  - ed25519
+  - sha3
+  - ai-agents
+  - claude-code
+  - cursor
+  - codex
+  - cline
