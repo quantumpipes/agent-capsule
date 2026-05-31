@@ -173,7 +173,6 @@ def build_plan(messages: list[dict[str, Any]], meta: dict[str, Any]) -> list[dic
 
     for index, m in enumerate(msgs):
         ts = m.get("ts", index)
-        mtype = m.get("type")
         say = m.get("say")
         ask = m.get("ask")
         text = m.get("text")

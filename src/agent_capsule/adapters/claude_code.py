@@ -14,17 +14,17 @@ thinking signatures as proof-of-reasoning, carried onto the action they
 preceded, plus a ``thinking_redacted`` flag.
 
 Storage (first match wins):
-  CLAUDE_CAPSULE_DB=<path>  -> one shared SQLite file (all sessions, one chain
+  AGENT_CAPSULE_DB=<path>   -> one shared SQLite file (all sessions, one chain
                                grouped by session_id as tenant_id)
-  (default)                 -> ~/.claude-capsule/chains/{session_id}.db
+  (default)                 -> ~/.agent-capsule/chains/claude-code/{session_id}.db
                                one file per conversation = one independent chain.
-                               Traverse with:  claude-capsule verify <file>
+                               Traverse with:  agent-capsule verify <file>
 
 The hook is fail-open: any error is logged and the process exits 0, so it can
 never block or stall a Claude Code session.
 
 Standalone usage (testing without registering the hook):
-  python -m claude_capsule.hook --transcript <path.jsonl> --session <id> [--finalize]
+  python -m agent_capsule.adapters.claude_code --transcript <path.jsonl> --session <id> [--finalize]
 """
 
 from __future__ import annotations

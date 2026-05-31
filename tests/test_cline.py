@@ -5,7 +5,6 @@ the chain, and confirm a one-byte tamper breaks verification."""
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from pathlib import Path
 

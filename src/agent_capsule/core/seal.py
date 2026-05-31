@@ -5,7 +5,7 @@ The signature is computed over the UTF-8 bytes of the hash *hex string* (not the
 raw hash bytes). This matches the in-browser verifier (`@noble/ed25519` over
 `utf8(hashHex)`), so chains written here verify offline in the Capsule Explorer.
 
-The signing key lives at ~/.claude-capsule/key (32 raw Ed25519 private bytes),
+The signing key lives at ~/.agent-capsule/key (32 raw Ed25519 private bytes),
 generated on first use with 0600 permissions. Anyone holding the matching public
 key (shipped in the export bundle) can verify; only the key holder can sign.
 """

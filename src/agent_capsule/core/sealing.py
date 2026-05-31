@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable
 
 from .capsule import Capsule
@@ -157,7 +158,7 @@ def seal_specs(
     specs: list[dict[str, Any]],
     *,
     finalize: bool = False,
-    db_path=None,
+    db_path: Path | None = None,
     tenant_id: str | None = None,
 ) -> dict[str, Any]:
     """Seal any specs not already sealed for this session, idempotently.

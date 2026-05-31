@@ -14,6 +14,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import ModuleType
 
 from .core.chain import CapsuleChain
 from .core.export import main as export_main
@@ -87,7 +88,7 @@ def _cmd_list(_args: argparse.Namespace) -> int:
 _ADAPTERS = {"claude-code": "claude_code", "cursor": "cursor", "codex": "codex", "cline": "cline"}
 
 
-def _adapter(tool: str):
+def _adapter(tool: str) -> ModuleType:
     import importlib
     return importlib.import_module(f"agent_capsule.adapters.{_ADAPTERS[tool]}")
 
