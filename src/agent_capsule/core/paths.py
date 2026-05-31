@@ -23,6 +23,12 @@ KEY_PATH = HOME / "key"
 LOG_PATH = HOME / "hook.log"
 CHAINS_DIR = HOME / "chains"
 
+# The meta-chain: one capsule per finalized conversation, recording its head
+# hash and capsule count. Its head commits to every conversation ever sealed.
+META_DB = HOME / "meta.db"
+META_LOCK = HOME / "meta.lock"
+META_CHECKPOINT = HOME / "meta.checkpoint.json"
+
 
 def tool_chains_dir(tool: str) -> Path:
     """Directory holding one SQLite chain per session for a given tool."""

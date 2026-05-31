@@ -62,6 +62,20 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
         storage.close()
 
 
+def _cmd_verify_meta(args: argparse.Namespace) -> int:
+    from .core.meta import verify_meta
+    r = verify_meta(seal=Seal() if args.signatures else None, deep=args.deep)
+    mark = "OK" if r.valid else "BROKEN"
+    print(f"[{mark}] meta-chain: {r.meta_capsules} capsules, "
+          f"{r.conversations_checked} conversations checked "
+          f"(head {r.meta_head[:16] or 'genesis'})")
+    if r.error:
+        print(f"  {r.error}")
+    for f in r.failures:
+        print(f"  - {f}")
+    return 0 if r.valid else 1
+
+
 def _cmd_list(_args: argparse.Namespace) -> int:
     if not CHAINS_DIR.exists():
         print(f"no chains yet ({CHAINS_DIR} does not exist)")
@@ -126,6 +140,11 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("db")
     i.add_argument("--seq", type=int, default=None)
     i.set_defaults(func=_cmd_inspect)
+
+    vm = sub.add_parser("verify-meta", help="verify the meta-chain and every conversation head")
+    vm.add_argument("--signatures", action="store_true", help="also verify Ed25519 signatures")
+    vm.add_argument("--deep", action="store_true", help="also fully re-verify each conversation")
+    vm.set_defaults(func=_cmd_verify_meta)
 
     le = sub.add_parser("list", help="list every chain, grouped by tool")
     le.set_defaults(func=_cmd_list)

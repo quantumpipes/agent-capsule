@@ -191,6 +191,14 @@ def seal_specs(
         if finalize:
             v = chain.verify(tenant_id=tenant_id, seal=seal)
             result.update(valid=v.valid, verified=v.capsules_verified, broken_at=v.broken_at)
+            if v.valid and rows:
+                try:
+                    from .meta import record_conversation
+                    result["meta"] = record_conversation(
+                        tool, session_id, result["head"], len(rows),
+                        seal=seal, db_path=db_path, tenant_id=tenant_id)
+                except Exception as e:  # fail-open: never break the agent's hook
+                    log(tool, f"meta record failed (non-fatal): {e}")
             log(tool, f"finalize session={session_id} appended={appended} total={len(rows)} "
                       f"valid={v.valid} broken_at={v.broken_at} head={result['head'][:12]}")
         else:
