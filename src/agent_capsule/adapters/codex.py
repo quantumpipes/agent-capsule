@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.capsule import TYPE_CHAT, TYPE_SYSTEM, TYPE_TOOL
-from ..core.sealing import SUMMARY_CAP, seal_specs
+from ..core.sealing import FULL, SUMMARY_CAP, seal_specs
 from ..core.sealing import log as _seal_log
 from ..core.sealing import trunc as _trunc
 
@@ -106,14 +106,133 @@ def tool_summary(name: str, args: Any) -> str:
     return f"{name}: {target}" if target else f"{name} call"
 
 
-def _output_text(output: Any) -> Any:
-    """function_call_output.output may be a str, a dict, or a JSON string."""
+def _output_text(output: Any) -> tuple[Any, bool | None]:
+    """function_call_output.output may be a str, a dict, or a JSON string.
+
+    Returns (text, success). ``success`` is None when the output gives no signal,
+    otherwise a bool parsed from a ``success``/``metadata.exit_code`` field.
+    """
+    success: bool | None = None
     if isinstance(output, dict):
+        if "success" in output:
+            success = bool(output.get("success"))
+        meta = output.get("metadata")
+        if isinstance(meta, dict) and meta.get("exit_code") is not None:
+            try:
+                success = int(meta["exit_code"]) == 0
+            except (TypeError, ValueError):
+                pass
         # Codex sometimes wraps as {"output": "...", "metadata": {...}}
         if "output" in output:
-            return output["output"]
-        return output
-    return output
+            return output["output"], success
+        return output, success
+    return output, success
+
+
+def _reasoning_text(payload: dict[str, Any]) -> str:
+    """Pull the model chain-of-thought out of a reasoning response_item.
+
+    Prefer the verbose ``content`` blocks (reasoning_text/text); fall back to the
+    ``summary`` blocks (summary_text). Returns "" when nothing readable survives
+    (e.g. only ``encrypted_content`` is present).
+    """
+    for key in ("content", "summary"):
+        blocks = payload.get(key)
+        if not isinstance(blocks, list):
+            continue
+        out: list[str] = []
+        for b in blocks:
+            if isinstance(b, dict) and b.get("type") in (
+                "reasoning_text", "text", "summary_text",
+            ):
+                t = b.get("text")
+                if t:
+                    out.append(str(t))
+            elif isinstance(b, str):
+                out.append(b)
+        joined = "\n".join(out).strip()
+        if joined:
+            return joined
+    return ""
+
+
+# --------------------------------------------------------------------------- #
+# apply_patch (V4A envelope) -> readable unified diff
+# --------------------------------------------------------------------------- #
+_PATCH_BEGIN = "*** Begin Patch"
+_PATCH_END = "*** End Patch"
+_FILE_OPS = (
+    ("*** Update File: ", "edited"),
+    ("*** Add File: ", "added"),
+    ("*** Delete File: ", "deleted"),
+)
+
+
+def _find_patch_envelope(args: Any) -> str | None:
+    """Locate a V4A ``*** Begin Patch ... *** End Patch`` envelope in tool args.
+
+    apply_patch passes it as ``input``/``patch``; a ``shell`` heredoc passes it
+    inside the joined ``command`` argv. Returns the raw envelope text or None.
+    """
+    candidates: list[Any] = []
+    if isinstance(args, dict):
+        for k in ("input", "patch", "apply_patch", "content"):
+            if args.get(k):
+                candidates.append(args[k])
+        cmd = args.get("command") or args.get("cmd")
+        if isinstance(cmd, list):
+            candidates.append("\n".join(str(x) for x in cmd))
+        elif cmd:
+            candidates.append(cmd)
+    elif isinstance(args, str):
+        candidates.append(args)
+    for c in candidates:
+        if not isinstance(c, str):
+            continue
+        start = c.find(_PATCH_BEGIN)
+        if start == -1:
+            continue
+        end = c.find(_PATCH_END, start)
+        if end == -1:
+            return c[start:]
+        return c[start:end + len(_PATCH_END)]
+    return None
+
+
+def render_apply_patch(envelope: str) -> tuple[str, int, int, list[str]]:
+    """Render a V4A patch envelope into unified-diff text.
+
+    Returns (diff_text, added, removed, side_effects). Lines beginning with ``+``
+    count as added, ``-`` as removed; ``@@`` hunk headers and context lines pass
+    through. Each file op contributes a ``<verb> <path>`` side effect.
+    """
+    out: list[str] = []
+    side: list[str] = []
+    added = removed = 0
+    for raw in envelope.splitlines():
+        line = raw.rstrip("\n")
+        stripped = line.strip()
+        if stripped in (_PATCH_BEGIN, _PATCH_END):
+            continue
+        matched = False
+        for prefix, verb in _FILE_OPS:
+            if line.startswith(prefix):
+                path = line[len(prefix):].strip()
+                out.append(f"--- {verb}: {path}")
+                side.append(f"{verb} {path}")
+                matched = True
+                break
+        if matched:
+            continue
+        if line.startswith("*** Move to: "):
+            out.append(f"--- moved to: {line[len('*** Move to: '):].strip()}")
+            continue
+        out.append(line)
+        if line.startswith("+"):
+            added += 1
+        elif line.startswith("-"):
+            removed += 1
+    return "\n".join(out), added, removed, side
 
 
 def _authority(approval_policy: str) -> tuple[str, str]:
@@ -184,14 +303,16 @@ def find_rollout(thread_id: str | None) -> Path | None:
 # Rollout -> capsule plan
 # --------------------------------------------------------------------------- #
 def _session_env(meta_payload: dict[str, Any]) -> dict[str, Any]:
+    git = meta_payload.get("git") if isinstance(meta_payload.get("git"), dict) else {}
     return {
         "cwd": meta_payload.get("cwd", ""),
         "cli_version": meta_payload.get("cli_version", ""),
         "originator": meta_payload.get("originator", ""),
         "model_provider": meta_payload.get("model_provider", ""),
-        "git_sha": meta_payload.get("git_sha", ""),
-        "git_branch": meta_payload.get("git_branch", ""),
-        "git_origin_url": meta_payload.get("git_origin_url", ""),
+        "forked_from_id": meta_payload.get("forked_from_id", ""),
+        "git_sha": meta_payload.get("git_sha") or git.get("commit_hash", ""),
+        "git_branch": meta_payload.get("git_branch") or git.get("branch", ""),
+        "git_origin_url": meta_payload.get("git_origin_url") or git.get("repository_url", ""),
     }
 
 
@@ -202,22 +323,29 @@ def build_plan(records: list[dict[str, Any]]) -> tuple[str | None, list[dict[str
     """
     session_id: str | None = None
     base_env: dict[str, Any] = {}
+    base_instructions = ""
     model = ""
     approval_policy = ""
     sandbox_policy = ""
+    turn_extras: dict[str, Any] = {}
     current_prompt = ""
+    pending_thinking = ""
     finalize = False
 
     # First pass: collect function_call_output keyed by call_id, so a tool
-    # spec can carry its result even if the output line came later.
+    # spec can carry its result (and success flag) even if the output line came
+    # later than the call.
     outputs: dict[str, Any] = {}
+    successes: dict[str, bool | None] = {}
     for r in records:
         if r.get("type") == "response_item":
             p = r.get("payload") or {}
             if p.get("type") == "function_call_output":
                 cid = p.get("call_id")
                 if cid:
-                    outputs[cid] = _output_text(p.get("output"))
+                    text, ok = _output_text(p.get("output"))
+                    outputs[cid] = text
+                    successes[cid] = ok
 
     specs: list[dict[str, Any]] = []
     last_spec: dict[str, Any] | None = None
@@ -225,7 +353,13 @@ def build_plan(records: list[dict[str, Any]]) -> tuple[str | None, list[dict[str
     def env_for() -> dict[str, Any]:
         e = dict(base_env)
         e.update(model=model, approval_policy=approval_policy, sandbox_policy=sandbox_policy)
+        e.update(turn_extras)
         return e
+
+    def take_thinking() -> str:
+        nonlocal pending_thinking
+        t, pending_thinking = pending_thinking, ""
+        return t
 
     for idx, r in enumerate(records):
         rtype = r.get("type")
@@ -234,16 +368,67 @@ def build_plan(records: list[dict[str, Any]]) -> tuple[str | None, list[dict[str
         if rtype == "session_meta":
             session_id = payload.get("id") or session_id
             base_env = _session_env(payload)
+            base_instructions = str(payload.get("base_instructions") or "").strip()
+            if base_instructions:
+                specs.append({
+                    "key": f"sysprompt:{idx}",
+                    "type": TYPE_SYSTEM,
+                    "prompt": "",
+                    "agent_id": TOOL,
+                    "env": dict(base_env),
+                    "model": model,
+                    "narrative": base_instructions,
+                    "summary": "session base instructions (system prompt)",
+                    "status": "success",
+                })
             continue
 
         if rtype == "turn_context":
             model = payload.get("model") or model
             approval_policy = payload.get("approval_policy") or approval_policy
             sandbox_policy = payload.get("sandbox_policy") or sandbox_policy
+            extras = {
+                "reasoning_effort": payload.get("effort") or payload.get("reasoning_effort") or "",
+                "reasoning_summary": payload.get("summary") or "",
+                "timezone": payload.get("timezone") or "",
+                "workspace_roots": payload.get("workspace_roots") or [],
+            }
+            turn_extras = {k: v for k, v in extras.items() if v}
+            continue
+
+        if rtype == "compacted":
+            summary = (
+                payload.get("message")
+                or payload.get("summary")
+                or payload.get("replacement_history")
+                or ""
+            )
+            if isinstance(summary, (list, dict)):
+                summary = _content_text(summary) if isinstance(summary, list) else json.dumps(summary)
+            summary = str(summary).strip()
+            if summary:
+                specs.append({
+                    "key": f"compact:{idx}",
+                    "type": TYPE_SYSTEM,
+                    "prompt": current_prompt,
+                    "agent_id": TOOL,
+                    "env": env_for(),
+                    "model": model,
+                    "narrative": summary,
+                    "summary": "history compaction",
+                    "status": "success",
+                })
             continue
 
         if rtype == "response_item":
             inner = payload.get("type")
+
+            if inner == "reasoning":
+                # Accumulate chain-of-thought; carry it onto the NEXT action.
+                rt = _reasoning_text(payload)
+                if rt:
+                    pending_thinking = (pending_thinking + "\n\n" + rt).strip() if pending_thinking else rt
+                continue
 
             if inner == "function_call":
                 name = payload.get("name", "?")
@@ -254,6 +439,24 @@ def build_plan(records: list[dict[str, Any]]) -> tuple[str | None, list[dict[str
                     args = {"_raw": raw_args}
                 cid = payload.get("call_id") or f"call:{idx}"
                 authority, policy_ref = _authority(approval_policy)
+                ok = successes.get(cid)
+                ok = True if ok is None else ok
+                result = outputs.get(cid)
+                summary_extra = ""
+                side_effects: list[str] = []
+
+                # apply_patch (or a shell heredoc carrying a V4A envelope):
+                # render the patch into a readable unified diff, keep the raw
+                # patch in arguments, and surface +/- counts + edited paths.
+                envelope = None
+                if name in ("apply_patch", "shell", "local_shell"):
+                    envelope = _find_patch_envelope(args)
+                if envelope:
+                    diff, added, removed, side_effects = render_apply_patch(envelope)
+                    if diff:
+                        result = diff
+                        summary_extra = f" (+{added}/-{removed})"
+
                 spec = {
                     "key": cid,
                     "type": TYPE_TOOL,
@@ -261,13 +464,37 @@ def build_plan(records: list[dict[str, Any]]) -> tuple[str | None, list[dict[str
                     "agent_id": TOOL,
                     "env": env_for(),
                     "model": model,
+                    "thinking": take_thinking(),
                     "authority_type": authority,
                     "policy_reference": policy_ref,
                     "tool": name,
                     "arguments": args,
-                    "result": outputs.get(cid),
+                    "result": result,
+                    "success": ok,
+                    "side_effects": side_effects,
+                    "summary": tool_summary(name, args) + summary_extra + ("" if ok else " (failed)"),
+                    "status": "success" if ok else "failure",
+                }
+                specs.append(spec)
+                last_spec = spec
+                continue
+
+            if inner in ("web_search_call", "web_search"):
+                action = payload.get("action") if isinstance(payload.get("action"), dict) else {}
+                query = payload.get("query") or action.get("query") or ""
+                spec = {
+                    "key": payload.get("id") or f"websearch:{idx}",
+                    "type": TYPE_TOOL,
+                    "prompt": current_prompt,
+                    "agent_id": TOOL,
+                    "env": env_for(),
+                    "model": model,
+                    "thinking": take_thinking(),
+                    "tool": "web_search",
+                    "arguments": {"query": query, "action": action or None},
+                    "result": {"query": query, "status": payload.get("status", "")},
                     "success": True,
-                    "summary": tool_summary(name, args),
+                    "summary": f"web_search: {query}"[:200] if query else "web_search",
                     "status": "success",
                 }
                 specs.append(spec)
@@ -285,6 +512,7 @@ def build_plan(records: list[dict[str, Any]]) -> tuple[str | None, list[dict[str
                         "agent_id": TOOL,
                         "env": env_for(),
                         "model": model,
+                        "thinking": take_thinking(),
                         "narrative": text,
                         "response": text,
                         "summary": _trunc(text, SUMMARY_CAP),
@@ -295,7 +523,7 @@ def build_plan(records: list[dict[str, Any]]) -> tuple[str | None, list[dict[str
                 elif role in ("user", "system") and text:
                     current_prompt = text
                 continue
-            # reasoning / other response_item kinds: ignore (often redacted)
+            # other response_item kinds: ignore
             continue
 
         if rtype == "event_msg":
@@ -311,6 +539,7 @@ def build_plan(records: list[dict[str, Any]]) -> tuple[str | None, list[dict[str
                         "agent_id": TOOL,
                         "env": env_for(),
                         "model": model,
+                        "thinking": take_thinking(),
                         "narrative": text,
                         "response": text,
                         "summary": _trunc(text, SUMMARY_CAP),
@@ -326,25 +555,56 @@ def build_plan(records: list[dict[str, Any]]) -> tuple[str | None, list[dict[str
                     current_prompt = text
                 continue
 
+            if inner == "web_search_end":
+                query = str(payload.get("query", "")).strip()
+                spec = {
+                    "key": f"websearch:{idx}",
+                    "type": TYPE_TOOL,
+                    "prompt": current_prompt,
+                    "agent_id": TOOL,
+                    "env": env_for(),
+                    "model": model,
+                    "tool": "web_search",
+                    "arguments": {"query": query, "action": payload.get("action")},
+                    "result": {"query": query},
+                    "success": True,
+                    "summary": f"web_search: {query}"[:200] if query else "web_search",
+                    "status": "success",
+                }
+                specs.append(spec)
+                last_spec = spec
+                continue
+
             if inner == "token_count":
                 info = payload.get("info") or {}
                 usage = info.get("total_token_usage") or info.get("last_token_usage") or {}
-                if usage:
-                    if last_spec is not None:
-                        # attach to the most recent spec (merge, don't clobber)
-                        last_spec["usage"] = _trunc(dict(usage), None)
+                # full breakdown: keep every field Codex reports, plus the
+                # model context window if present at info level.
+                usage = dict(usage) if usage else {}
+                if info.get("model_context_window") is not None:
+                    usage.setdefault("model_context_window", info["model_context_window"])
+                rate_limits = payload.get("rate_limits") or info.get("rate_limits")
+                if usage or rate_limits:
+                    if last_spec is not None and usage:
+                        # attach the full usage to the most recent spec
+                        last_spec["usage"] = _trunc(usage, FULL)
+                        if rate_limits:
+                            last_spec.setdefault("env", {})["rate_limits"] = _trunc(rate_limits, FULL)
                     else:
-                        specs.append({
+                        sp = {
                             "key": f"usage:{idx}",
                             "type": TYPE_SYSTEM,
                             "prompt": current_prompt,
                             "agent_id": TOOL,
                             "env": env_for(),
                             "model": model,
-                            "usage": dict(usage),
+                            "usage": usage,
                             "summary": "token usage",
                             "status": "success",
-                        })
+                        }
+                        if rate_limits:
+                            sp["env"]["rate_limits"] = _trunc(rate_limits, FULL)
+                        specs.append(sp)
                 continue
 
             if inner == "task_complete":
@@ -352,8 +612,23 @@ def build_plan(records: list[dict[str, Any]]) -> tuple[str | None, list[dict[str
                 continue
             # task_started and other events: ignore
             continue
-        # compacted / unknown wrappers: ignore
+        # unknown wrappers: ignore
         continue
+
+    # Reasoning that trailed with no following action: emit a small system
+    # capsule so the chain-of-thought is never silently dropped.
+    if pending_thinking:
+        specs.append({
+            "key": f"reasoning:{len(records)}",
+            "type": TYPE_SYSTEM,
+            "prompt": current_prompt,
+            "agent_id": TOOL,
+            "env": env_for(),
+            "model": model,
+            "thinking": pending_thinking,
+            "summary": "model reasoning (no following action)",
+            "status": "success",
+        })
 
     return session_id, specs, finalize
 

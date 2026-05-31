@@ -40,14 +40,21 @@ from pathlib import Path
 from typing import Any
 
 from ..core.capsule import TYPE_CHAT, TYPE_SYSTEM, TYPE_TOOL
-from ..core.sealing import SUMMARY_CAP, seal_specs
+from ..core.sealing import RESULT_CAP, SUMMARY_CAP, seal_specs
 from ..core.sealing import log as _seal_log
 from ..core.sealing import trunc as _trunc
 
 TOOL = "cline"
 
-# ClineSayTool.tool values that mutate the filesystem.
-FILE_WRITE_TOOLS = {"editedExistingFile", "newFileCreated", "fileDeleted", "appliedDiff"}
+# ClineSayTool.tool values that mutate the filesystem (the cline `tool` enum
+# verb subset that writes), paired with the human-readable side-effect verb.
+FILE_WRITE_VERBS = {
+    "editedExistingFile": "edited",
+    "newFileCreated": "wrote",
+    "fileDeleted": "deleted",
+    "appliedDiff": "edited",
+}
+FILE_WRITE_TOOLS = set(FILE_WRITE_VERBS)
 
 # Known VS Code-family globalStorage bases for the Cline publisher.
 _PUBLISHER = "saoudrizwan.claude-dev"
@@ -109,8 +116,120 @@ def _short(text: Any, cap: int = 200) -> str:
     return str(text or "").replace("\n", " ").strip()[:cap]
 
 
+def _looks_like_diff(text: str) -> bool:
+    """A cline replace_in_file diff uses SEARCH/REPLACE markers or hunk headers."""
+    return ("<<<<<<< SEARCH" in text or "------- SEARCH" in text
+            or "@@ " in text or text.lstrip().startswith(("---", "+++")))
+
+
+def _count_diff(text: str) -> tuple[int, int]:
+    """Count added/removed lines in a unified or SEARCH/REPLACE diff."""
+    added = removed = 0
+    for ln in text.splitlines():
+        if ln.startswith("+") and not ln.startswith("+++"):
+            added += 1
+        elif ln.startswith("-") and not ln.startswith("---"):
+            removed += 1
+    return added, removed
+
+
 # --------------------------------------------------------------------------- #
-# task metadata -> model / env
+# api_conversation_history.json -> ordered tool results + thinking
+# --------------------------------------------------------------------------- #
+def _content_text(content: Any) -> Any:
+    """A tool_result `content` is a string or a list of blocks; flatten to text.
+
+    Returns the original string, the joined text of text-blocks, or (when there
+    is no text) the structured list so nothing is silently lost.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "text":
+                parts.append(str(b.get("text", "")))
+            elif isinstance(b, str):
+                parts.append(b)
+        if parts:
+            return "\n".join(p for p in parts if p)
+        return content
+    return content
+
+
+def parse_api_history(history: list[Any]) -> tuple[list[Any], list[str]]:
+    """Walk the Anthropic MessageParam[] history once.
+
+    Returns ``(results, thinkings)`` where ``results[i]`` is the truncated
+    tool_result content paired (by ``tool_use_id``) with the i-th ``tool_use``
+    block in document order, and ``thinkings`` is the per-tool_use accumulated
+    assistant thinking text that immediately preceded that tool_use (so it can
+    be carried onto the matching ui_messages spec).
+    """
+    # First pass: collect tool_result content keyed by tool_use_id.
+    by_id: dict[str, Any] = {}
+    for m in history:
+        if not isinstance(m, dict):
+            continue
+        content = m.get("content")
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "tool_result":
+                tid = b.get("tool_use_id")
+                if tid is not None:
+                    by_id[str(tid)] = _content_text(b.get("content"))
+
+    # Second pass: tool_use blocks in document order, with the thinking that
+    # accumulated since the previous tool_use.
+    results: list[Any] = []
+    thinkings: list[str] = []
+    pending = ""
+    for m in history:
+        if not isinstance(m, dict):
+            continue
+        content = m.get("content")
+        if isinstance(content, str):
+            continue
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if not isinstance(b, dict):
+                continue
+            btype = b.get("type")
+            if btype == "thinking":
+                t = str(b.get("thinking", "")).strip()
+                if t:
+                    pending = (pending + "\n" + t).strip()
+            elif btype == "tool_use":
+                tid = str(b.get("id", ""))
+                results.append(_trunc(by_id.get(tid), RESULT_CAP))
+                thinkings.append(pending)
+                pending = ""
+    return results, thinkings
+
+
+# --------------------------------------------------------------------------- #
+# browser_action_result -> screenshot reference WITHOUT the base64 blob
+# --------------------------------------------------------------------------- #
+def _strip_screenshot(info: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Turn a browser_action_result payload into a bounded reference.
+
+    The raw ``screenshot`` is a base64 data URI (often hundreds of KB). We store
+    its byte length and a flag, never the data. Returns (result, url).
+    """
+    shot = info.get("screenshot")
+    result: dict[str, Any] = {
+        "currentUrl": info.get("currentUrl"),
+        "logs": _trunc(info.get("logs"), RESULT_CAP),
+        "has_screenshot": bool(shot),
+        "screenshot_bytes": len(shot) if isinstance(shot, str) else 0,
+    }
+    return result, str(info.get("currentUrl") or "")
+
+
+# --------------------------------------------------------------------------- #
+# task metadata -> model / env / provenance
 # --------------------------------------------------------------------------- #
 def task_model(meta: dict[str, Any]) -> str:
     usage = meta.get("model_usage") or []
@@ -132,33 +251,101 @@ def task_env(meta: dict[str, Any]) -> dict[str, Any]:
     return env
 
 
+def provenance_spec(meta: dict[str, Any]) -> dict[str, Any] | None:
+    """One leading system capsule summarizing task_metadata.json provenance.
+
+    Captures the files Cline touched (path + source + read/edit dates), the
+    per-model usage records, and the os/cline_version history. Keyed stably so
+    repeated finalize calls do not duplicate it.
+    """
+    files = meta.get("files_in_context") or []
+    models = meta.get("model_usage") or []
+    hist = meta.get("environment_history") or []
+    if not (files or models or hist):
+        return None
+
+    def _files() -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for f in files:
+            if not isinstance(f, dict):
+                continue
+            out.append({
+                "path": f.get("path"),
+                "record_source": f.get("record_source"),
+                "record_state": f.get("record_state"),
+                "cline_read_date": f.get("cline_read_date"),
+                "cline_edit_date": f.get("cline_edit_date"),
+                "user_edit_date": f.get("user_edit_date"),
+            })
+        return out
+
+    structured = {
+        "files_in_context": _files(),
+        "model_usage": [m for m in models if isinstance(m, dict)],
+        "environment_history": [h for h in hist if isinstance(h, dict)],
+    }
+    env = dict(task_env(meta))
+    env["files_in_context_count"] = len(structured["files_in_context"])
+    env["model_usage_count"] = len(structured["model_usage"])
+    return {
+        "key": "provenance",
+        "type": TYPE_SYSTEM,
+        "prompt": "",
+        "agent_id": TOOL,
+        "env": env,
+        "model": task_model(meta),
+        "narrative": "",
+        "thinking": "",
+        "authority_type": "autonomous",
+        "tool": None,
+        "summary": "session provenance",
+        "status": "success",
+        "response": "",
+        "structured": _trunc(structured, RESULT_CAP),
+    }
+
+
 # --------------------------------------------------------------------------- #
 # ui_messages.json -> capsule plan
 # --------------------------------------------------------------------------- #
-def build_plan(messages: list[dict[str, Any]], meta: dict[str, Any]) -> list[dict[str, Any]]:
-    """Walk ClineMessage[] (ordered by ts) into a list of capsule specs."""
+def build_plan(messages: list[dict[str, Any]], meta: dict[str, Any],
+               history: list[Any] | None = None) -> list[dict[str, Any]]:
+    """Walk ClineMessage[] (ordered by ts) into a list of capsule specs.
+
+    ``history`` is the parsed ``api_conversation_history.json`` (Anthropic
+    MessageParam[]). The Nth tool spec emitted from ui_messages corresponds to
+    the Nth ``tool_use`` block in that history, so we JOIN them in order to fill
+    each tool spec's ``result`` (today None) and carry the preceding assistant
+    ``thinking`` onto it.
+    """
     model = task_model(meta)
     env = task_env(meta)
     msgs = [m for m in messages if isinstance(m, dict)]
     msgs.sort(key=lambda m: m.get("ts", 0))
 
+    api_results, api_thinkings = parse_api_history(history or [])
+    tool_cursor = 0  # index into api_results / api_thinkings, advanced per tool spec
+
     plan: list[dict[str, Any]] = []
     current_prompt = ""
     pending_usage: dict[str, Any] = {}
+    pending_env: dict[str, Any] = {}
     pending_thinking = ""
 
     def base(ts: Any, index: int, *, narrative: str = "", thinking: str = "",
              authority: str = "autonomous") -> dict[str, Any]:
+        nonlocal pending_env
         spec = {
             "key": f"{ts}:{index}",
             "prompt": current_prompt,
             "agent_id": TOOL,
-            "env": dict(env),
+            "env": {**env, **pending_env},
             "model": model,
             "narrative": narrative,
             "thinking": thinking,
             "authority_type": authority,
         }
+        pending_env = {}
         return spec
 
     def take_usage() -> dict[str, Any]:
@@ -171,6 +358,15 @@ def build_plan(messages: list[dict[str, Any]], meta: dict[str, Any]) -> list[dic
         t, pending_thinking = pending_thinking, ""
         return t
 
+    def take_api() -> tuple[Any, str]:
+        """Pop the next api-history (result, thinking) for the next tool spec."""
+        nonlocal tool_cursor
+        if tool_cursor < len(api_results):
+            res, think = api_results[tool_cursor], api_thinkings[tool_cursor]
+            tool_cursor += 1
+            return res, think
+        return None, ""
+
     for index, m in enumerate(msgs):
         ts = m.get("ts", index)
         say = m.get("say")
@@ -180,6 +376,18 @@ def build_plan(messages: list[dict[str, Any]], meta: dict[str, Any]) -> list[dic
 
         if reasoning:
             pending_thinking = (pending_thinking + "\n" + str(reasoning)).strip()
+
+        # ---- workspace-snapshot + truncation provenance carried onto next --
+        # action. Ties a capsule to the checkpoint commit it ran against and to
+        # the conversation-history window Cline kept in the model context.
+        if m.get("lastCheckpointHash") is not None:
+            pending_env["last_checkpoint_hash"] = m.get("lastCheckpointHash")
+        if m.get("isCheckpointCheckedOut") is not None:
+            pending_env["is_checkpoint_checked_out"] = bool(m.get("isCheckpointCheckedOut"))
+        if m.get("conversationHistoryIndex") is not None:
+            pending_env["conversation_history_index"] = m.get("conversationHistoryIndex")
+        if m.get("conversationHistoryDeletedRange") is not None:
+            pending_env["conversation_history_deleted_range"] = m.get("conversationHistoryDeletedRange")
 
         # ---- user request / prompt ----------------------------------------
         if say in ("task", "user_feedback") or ask == "followup":
@@ -207,6 +415,15 @@ def build_plan(messages: list[dict[str, Any]], meta: dict[str, Any]) -> list[dic
                     "cache_reads": info.get("cacheReads"),
                     "cost": info.get("cost"),
                 }
+                if info.get("cancelReason") is not None:
+                    pending_usage["cancel_reason"] = info.get("cancelReason")
+                    pending_env["cancel_reason"] = info.get("cancelReason")
+                if info.get("streamingFailedMessage"):
+                    pending_usage["streaming_failed"] = True
+                    pending_env["streaming_failed_message"] = _short(
+                        info.get("streamingFailedMessage"), 500)
+                if info.get("retryStatus") is not None:
+                    pending_env["retry_status"] = info.get("retryStatus")
             continue
 
         # ---- reasoning (hidden thinking) -----------------------------------
@@ -220,21 +437,42 @@ def build_plan(messages: list[dict[str, Any]], meta: dict[str, Any]) -> list[dic
             info = _maybe_json(text) or {}
             tname = str(info.get("tool") or "tool")
             path = info.get("path")
-            args = {k: info.get(k) for k in ("path", "diff", "content", "regex")
-                    if info.get(k) is not None}
+            # Capture the line-range arguments cline records when reading/editing.
+            args = {k: info.get(k) for k in (
+                "path", "diff", "content", "regex", "filePattern",
+                "startLineNumbers", "readLineStart", "readLineEnd",
+                "operationIsLocatedInWorkspace") if info.get(k) is not None}
+            api_result, api_think = take_api()
+            think = (take_thinking() + ("\n" + api_think if api_think else "")).strip()
             side: list[str] = []
-            if tname in FILE_WRITE_TOOLS and path:
-                side.append(f"wrote {path}")
-            summary = f"{tname}: {path}" if path else tname
+            extra = ""
+            result: Any = api_result
+
+            # ClineSayTool.content carries `diff || content`: the SEARCH/REPLACE
+            # diff for replace_in_file or the full new file for write_to_file.
+            content = info.get("diff") or info.get("content") or ""
+            content = str(content) if content is not None else ""
+            if content and _looks_like_diff(content):
+                added, removed = _count_diff(content)
+                result = _trunc(content, RESULT_CAP)
+                extra = f" (+{added}/-{removed})"
+            elif api_result is None and content:
+                # write_to_file with a full new file body: keep it as the result.
+                result = _trunc(content, RESULT_CAP)
+
+            verb = FILE_WRITE_VERBS.get(tname)
+            if verb and path:
+                side.append(f"{verb} {path}")
+            summary = (f"{tname}: {path}" if path else tname) + extra
             # ask:"tool" means Cline requested human approval before acting.
             authority = "human_approved" if ask == "tool" else "autonomous"
             plan.append({
-                **base(ts, index, thinking=take_thinking(), authority=authority),
+                **base(ts, index, thinking=think, authority=authority),
                 "type": TYPE_TOOL,
                 "usage": take_usage(),
                 "tool": tname,
                 "arguments": args,
-                "result": None,
+                "result": result,
                 "side_effects": side,
                 "success": True,
                 "summary": summary,
@@ -244,14 +482,19 @@ def build_plan(messages: list[dict[str, Any]], meta: dict[str, Any]) -> list[dic
 
         # ---- shell command + its output -----------------------------------
         if say == "command" or ask == "command":
+            # Advance the api-history cursor in lockstep (execute_command is a
+            # tool_use too) and prefer the api tool_result for the output, with
+            # the streamed command_output appended below as a fallback/extra.
+            api_result, api_think = take_api()
+            think = (take_thinking() + ("\n" + api_think if api_think else "")).strip()
             authority = "human_approved" if ask == "command" else "autonomous"
             plan.append({
-                **base(ts, index, thinking=take_thinking(), authority=authority),
+                **base(ts, index, thinking=think, authority=authority),
                 "type": TYPE_TOOL,
                 "usage": take_usage(),
                 "tool": "command",
                 "arguments": {"command": str(text or "")},
-                "result": None,
+                "result": api_result,
                 "side_effects": [f"ran {_short(text)}"],
                 "success": True,
                 "summary": f"command: {_short(text)}",
@@ -260,12 +503,49 @@ def build_plan(messages: list[dict[str, Any]], meta: dict[str, Any]) -> list[dic
             continue
 
         if say == "command_output":
-            # Attach output to the most recent command tool spec.
+            # Attach streamed output to the most recent command tool spec,
+            # appending to any tool_result already filled from api history.
             for spec in reversed(plan):
                 if spec.get("tool") == "command":
                     prior = spec.get("result")
-                    spec["result"] = (str(prior) + str(text or "")) if prior else str(text or "")
+                    spec["result"] = _trunc(
+                        (str(prior) + str(text or "")) if prior else str(text or ""),
+                        RESULT_CAP)
                     break
+            continue
+
+        # ---- browser screenshot result (strip the base64 blob) -------------
+        if say == "browser_action_result":
+            info = _maybe_json(text)
+            if isinstance(info, dict):
+                result, url = _strip_screenshot(info)
+            else:
+                result, url = {"has_screenshot": False, "screenshot_bytes": 0}, ""
+            side = [f"captured screenshot of {url}"] if result.get("has_screenshot") else []
+            # Attach to the most recent browser_action tool spec when present.
+            target = None
+            for spec in reversed(plan):
+                if spec.get("tool") == "browser_action":
+                    target = spec
+                    break
+            if target is not None:
+                target["result"] = result
+                if side:
+                    target["side_effects"] = (target.get("side_effects") or []) + side
+                if url:
+                    target["summary"] = f"browser_action: {url}"
+            else:
+                plan.append({
+                    **base(ts, index, thinking=take_thinking()),
+                    "type": TYPE_TOOL,
+                    "usage": take_usage(),
+                    "tool": "browser_action_result",
+                    "arguments": {},
+                    "result": result,
+                    "side_effects": side,
+                    "summary": f"browser_action_result: {url or '(no url)'}",
+                    "status": "success",
+                })
             continue
 
         # ---- browser / MCP tool actions ------------------------------------
@@ -277,12 +557,18 @@ def build_plan(messages: list[dict[str, Any]], meta: dict[str, Any]) -> list[dic
                 tname = "use_mcp_server"
             else:
                 tname = "mcp_server_response"
+            # A ClineMessage.images array is raw base64; record the count, not
+            # the data, so the capsule never carries an image blob.
+            imgs = m.get("images")
+            args: dict[str, Any] = info if isinstance(info, dict) else {"text": _short(text, 1000)}
+            if isinstance(imgs, list) and imgs:
+                args = {**args, "image_count": len(imgs)}
             plan.append({
                 **base(ts, index, thinking=take_thinking()),
                 "type": TYPE_TOOL,
                 "usage": take_usage(),
                 "tool": tname,
-                "arguments": info if isinstance(info, dict) else {"text": _short(text, 1000)},
+                "arguments": args,
                 "result": None,
                 "summary": f"{tname}: {_short(text, 120)}",
                 "status": "success",
@@ -325,6 +611,12 @@ def build_plan(messages: list[dict[str, Any]], meta: dict[str, Any]) -> list[dic
             "response": "",
         })
 
+    # Lead with one session-provenance system capsule (files touched, model
+    # usage, environment). Keyed stably so finalize re-runs do not duplicate it.
+    prov = provenance_spec(meta)
+    if prov is not None:
+        plan.insert(0, prov)
+
     return plan
 
 
@@ -334,11 +626,14 @@ def build_plan(messages: list[dict[str, Any]], meta: dict[str, Any]) -> list[dic
 def run(session_id: str, task_dir: Path, finalize: bool) -> dict[str, Any]:
     messages = _read_json(task_dir / "ui_messages.json", [])
     meta = _read_json(task_dir / "task_metadata.json", {})
+    history = _read_json(task_dir / "api_conversation_history.json", [])
     if not isinstance(messages, list):
         messages = []
     if not isinstance(meta, dict):
         meta = {}
-    plan = build_plan(messages, meta)
+    if not isinstance(history, list):
+        history = []
+    plan = build_plan(messages, meta, history)
     shared = os.environ.get("AGENT_CAPSULE_DB")
     if shared:
         return seal_specs(TOOL, session_id, plan, finalize=finalize,

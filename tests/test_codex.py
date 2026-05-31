@@ -20,19 +20,46 @@ from agent_capsule.core.storage import CapsuleStorage
 SESSION = "test-thread"
 
 
+APPLY_PATCH = (
+    "*** Begin Patch\n"
+    "*** Update File: src/app.py\n"
+    "@@ def main():\n"
+    "-    print('old')\n"
+    "+    print('new')\n"
+    "+    return 0\n"
+    "*** End Patch"
+)
+
+
 def _write_rollout(path: Path) -> None:
     lines = [
         {"timestamp": "2026-05-30T12:00:00Z", "type": "session_meta",
          "payload": {"id": SESSION, "cwd": "/tmp/work", "cli_version": "0.9.0",
                      "originator": "cli", "model_provider": "openai",
+                     "base_instructions": "You are Codex, a coding agent.",
                      "git_branch": "main", "git_sha": "abc123"}},
         {"timestamp": "2026-05-30T12:00:01Z", "type": "turn_context",
          "payload": {"model": "gpt-5-codex", "approval_policy": "on-request",
-                     "sandbox_policy": "workspace-write", "cwd": "/tmp/work"}},
+                     "sandbox_policy": "workspace-write", "cwd": "/tmp/work",
+                     "effort": "high", "summary": "auto", "timezone": "America/Chicago"}},
         {"timestamp": "2026-05-30T12:00:02Z", "type": "event_msg",
          "payload": {"type": "task_started"}},
         {"timestamp": "2026-05-30T12:00:03Z", "type": "event_msg",
-         "payload": {"type": "user_message", "message": "list the files"}},
+         "payload": {"type": "user_message", "message": "fix the bug then list files"}},
+        {"timestamp": "2026-05-30T12:00:035Z", "type": "response_item",
+         "payload": {"type": "reasoning",
+                     "summary": [{"type": "summary_text", "text": "Plan the edit."}],
+                     "content": [{"type": "reasoning_text",
+                                  "text": "I will update app.py to print new."}],
+                     "encrypted_content": "REDACTED=="}},
+        {"timestamp": "2026-05-30T12:00:036Z", "type": "response_item",
+         "payload": {"type": "function_call", "name": "apply_patch",
+                     "arguments": json.dumps({"input": APPLY_PATCH}),
+                     "call_id": "call-0"}},
+        {"timestamp": "2026-05-30T12:00:037Z", "type": "response_item",
+         "payload": {"type": "function_call_output", "call_id": "call-0",
+                     "output": {"output": "Success. Updated src/app.py",
+                                "metadata": {"exit_code": 0}}}},
         {"timestamp": "2026-05-30T12:00:04Z", "type": "response_item",
          "payload": {"type": "function_call", "name": "shell",
                      "arguments": json.dumps({"command": ["ls", "-la"]}),
@@ -43,11 +70,16 @@ def _write_rollout(path: Path) -> None:
         {"timestamp": "2026-05-30T12:00:06Z", "type": "event_msg",
          "payload": {"type": "agent_message",
                      "message": "The directory is empty except for itself."}},
+        {"timestamp": "2026-05-30T12:00:065Z", "type": "compacted",
+         "payload": {"message": "Earlier: edited app.py and listed files."}},
         {"timestamp": "2026-05-30T12:00:07Z", "type": "event_msg",
          "payload": {"type": "token_count",
                      "info": {"total_token_usage": {"input_tokens": 120,
-                              "output_tokens": 30, "cached_input_tokens": 0,
-                              "reasoning_output_tokens": 10, "total_tokens": 150}}}},
+                              "output_tokens": 30, "cached_input_tokens": 8,
+                              "reasoning_output_tokens": 10, "total_tokens": 150},
+                              "model_context_window": 272000},
+                     "rate_limits": {"plan_type": "pro",
+                                     "primary": {"used_percent": 12.5}}}},
         {"timestamp": "2026-05-30T12:00:08Z", "type": "event_msg",
          "payload": {"type": "task_complete"}},
     ]
@@ -106,9 +138,40 @@ def test_seals_and_verifies(home, tmp_path):
         assert chats, "expected a chat capsule"
         assert any("empty" in (c["outcome"].get("result") or "") for c in chats)
 
-        # usage was captured somewhere in the chain
-        assert any(c["execution"]["resources_used"].get("total_tokens") == 150
-                   for c in canon), "token usage not attached"
+        # usage was captured somewhere in the chain, with the full breakdown
+        usage_caps = [c for c in canon
+                      if c["execution"]["resources_used"].get("total_tokens") == 150]
+        assert usage_caps, "token usage not attached"
+        ru = usage_caps[0]["execution"]["resources_used"]
+        assert ru.get("cached_input_tokens") == 8 or ru.get("reasoning_output_tokens") == 10
+        assert ru.get("model_context_window") == 272000
+
+        # apply_patch capsule: rendered diff in result, +/- counts in summary,
+        # "edited <path>" side effect.
+        patch = next(c for c in tools
+                     if c["execution"]["tool_calls"][0]["tool"] == "apply_patch")
+        assert "(+2/-1)" in patch["outcome"]["summary"]
+        diff = str(patch["execution"]["tool_calls"][0]["result"])
+        assert "+    print('new')" in diff and "-    print('old')" in diff
+        assert "edited src/app.py" in patch["outcome"]["side_effects"]
+        # the raw V4A envelope is preserved in arguments
+        assert "*** Begin Patch" in json.dumps(patch["execution"]["tool_calls"][0]["arguments"])
+
+        # the function_call following the reasoning item carries the reasoning
+        # text as hidden thinking (-> reasoning.reasoning).
+        assert "update app.py" in patch["reasoning"]["reasoning"]
+
+        # session base instructions captured as a system capsule
+        systems = [c for c in canon if c["type"] == "system"]
+        assert any("Codex, a coding agent" in (c["reasoning"].get("analysis") or "")
+                   for c in systems), "base_instructions not captured"
+
+        # history compaction captured as a system capsule
+        assert any(c["outcome"]["summary"] == "history compaction" for c in systems)
+
+        # turn_context extras land in the environment
+        assert any(c["context"]["environment"].get("reasoning_effort") == "high"
+                   for c in canon)
     finally:
         storage.close()
 

@@ -174,6 +174,35 @@ Open any capsule in the [Capsule Explorer](https://github.com/quantumpipes/capsu
 to see these six sections rendered, with each section's seal re-verified live in
 your browser.
 
+## What the adapters fill in (the rich part)
+
+The sections above are the skeleton. What makes a capsule worth reading is the
+content each adapter pulls from its tool's transcript. Capsules record what an
+action *did*, not just that it ran:
+
+- **Real diffs.** File edits carry a rendered unified diff with `(+N/-M)` line
+  counts in the summary. (Claude Code `structuredPatch`, Codex `apply_patch` V4A
+  envelope, Cursor/Cline edit payloads.)
+- **Full tool results.** Bash/shell capsules carry actual stdout and stderr;
+  Read carries the file content and line count; Web search carries the query and
+  the returned URLs. Cline joins its API history so even read/search/MCP tools
+  carry their results.
+- **The model's reasoning.** Where a tool persists it (Codex reasoning items,
+  Cursor/Cline thinking blocks), the deliberation lands in `reasoning.reasoning`.
+  Claude Code redacts thinking text, so the capsule records the proof-of-reasoning
+  signature and a `thinking_redacted` flag instead.
+- **Subagent fan-out.** A delegated subagent capsule carries a scorecard:
+  `[Explore: 2 edits, +14/-3, 9 tool calls]`, so the parent chain shows what its
+  children did.
+- **Cost and provenance.** Token usage (including cache and reasoning tokens),
+  per-turn model and context-window telemetry, checkpoint hashes, and, for
+  Cursor, a per-conversation AI-authorship rollup from its code-tracking DB.
+
+Heavy raw blobs (whole original files, base64 screenshots, entire subagent
+transcripts) are deliberately summarized or referenced rather than inlined, so
+capsules stay readable and the chain stays light. Per-tool specifics and their
+caveats are in [tools/](tools/).
+
 ## See also
 
 - [wire-format.md](wire-format.md): the exact canonical bytes, hash, and signature scheme.

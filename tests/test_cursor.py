@@ -61,6 +61,14 @@ def _write_vscdb(path: Path) -> None:
                 "createdAt": "2026-05-30T10:00:06Z",
                 "text": "",
                 "tokenCount": {"inputTokens": 0, "outputTokens": 8},
+                "thinking": "I should run pytest to confirm the suite is green.",
+                "thinkingDurationMs": 1200,
+                "turnDurationMs": 3400,
+                "modelInfo": {"modelName": "claude-3.7-sonnet"},
+                "contextWindowStatusAtCreation": {
+                    "tokensUsed": 4096, "tokenLimit": 200000,
+                    "percentageRemaining": 97.9,
+                },
                 "toolFormerData": {
                     "name": "run_terminal_cmd",
                     "rawArgs": json.dumps({"command": "pytest -q", "cwd": "/repo"}),
@@ -69,7 +77,26 @@ def _write_vscdb(path: Path) -> None:
                     "status": "completed",
                 },
             },
+            "b4": {
+                "type": 2,
+                "createdAt": "2026-05-30T10:00:07Z",
+                "text": "",
+                "tokenCount": {"inputTokens": 0, "outputTokens": 20},
+                "toolFormerData": {
+                    "name": "edit_file_v2",
+                    "params": {
+                        "target_file": "src/parser.py",
+                        "old_string": "def parse(x):\n    return x",
+                        "new_string": "def parse(x):\n    return x.strip()\n    # done",
+                    },
+                    "result": json.dumps({"applied": True}),
+                    "status": "completed",
+                },
+            },
         }
+        composer["fullConversationHeadersOnly"].append(
+            {"bubbleId": "b4", "type": 2, "serverBubbleId": "s4"}
+        )
         conn.execute(
             "INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)",
             (f"composerData:{CONV_ID}", json.dumps(composer)),
@@ -79,6 +106,42 @@ def _write_vscdb(path: Path) -> None:
                 "INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)",
                 (f"bubbleId:{CONV_ID}:{bid}", json.dumps(body)),
             )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _write_ai_tracking_db(path: Path) -> None:
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute(
+            "CREATE TABLE ai_code_hashes (hash TEXT, source TEXT, fileName TEXT, "
+            "requestId TEXT, conversationId TEXT, model TEXT, timestamp INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE scored_commits (commitHash TEXT, branchName TEXT, "
+            "linesAdded INTEGER, composerLinesAdded INTEGER, humanLinesAdded INTEGER, "
+            "commitMessage TEXT, commitDate INTEGER, v1AiPercentage REAL, "
+            "v2AiPercentage REAL)"
+        )
+        hashes = [
+            ("h1", "composer", "src/parser.py", "req-1", CONV_ID, "claude-3.7-sonnet", 1),
+            ("h2", "composer", "src/util.py", "req-1", CONV_ID, "claude-3.7-sonnet", 2),
+            ("h3", "human", "src/parser.py", "req-2", CONV_ID, "claude-3.7-sonnet", 3),
+            # A row for a different conversation that must be ignored.
+            ("h4", "composer", "other.py", "req-9", "conv-other", "gpt-5", 4),
+        ]
+        conn.executemany(
+            "INSERT INTO ai_code_hashes (hash, source, fileName, requestId, "
+            "conversationId, model, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            hashes,
+        )
+        conn.execute(
+            "INSERT INTO scored_commits (commitHash, branchName, linesAdded, "
+            "composerLinesAdded, humanLinesAdded, commitMessage, commitDate, "
+            "v1AiPercentage, v2AiPercentage) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("abc123def456", "main", 30, 24, 6, "fix parser", 1_717_000_500_000, 0.7, 0.8),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -101,6 +164,8 @@ def env_home(tmp_path, monkeypatch):
     home = tmp_path / "agent-capsule-home"
     monkeypatch.setenv("AGENT_CAPSULE_HOME", str(home))
     monkeypatch.delenv("AGENT_CAPSULE_DB", raising=False)
+    # Never read a real on-disk AI tracking DB during tests; opt in per-test.
+    monkeypatch.setenv("AI_TRACKING_DB", str(tmp_path / "no-such-ai-tracking.db"))
     # paths.HOME is computed at import time, so reload modules that captured it.
     import importlib
     import agent_capsule.core.paths as paths
@@ -116,7 +181,7 @@ def _chain_db(home: Path) -> Path:
     return home / "chains" / "cursor" / f"{CONV_ID}.db"
 
 
-def test_seals_tool_and_chat_from_db(env_home, tmp_path):
+def test_seals_tool_and_chat_from_db(env_home, tmp_path, monkeypatch):
     import agent_capsule.adapters.cursor as cursor
     from agent_capsule.core.chain import CapsuleChain
     from agent_capsule.core.seal import Seal
@@ -124,8 +189,11 @@ def test_seals_tool_and_chat_from_db(env_home, tmp_path):
 
     vscdb = tmp_path / "state.vscdb"
     transcript = tmp_path / "transcript.jsonl"
+    ai_db = tmp_path / "ai-code-tracking.db"
     _write_vscdb(vscdb)
     _write_transcript(transcript)
+    _write_ai_tracking_db(ai_db)
+    monkeypatch.setenv("AI_TRACKING_DB", str(ai_db))
 
     rc = cursor.main([
         "--db", str(vscdb),
@@ -147,17 +215,49 @@ def test_seals_tool_and_chat_from_db(env_home, tmp_path):
     finally:
         storage.close()
 
-    types = {json.loads(r["canonical"])["type"] for r in rows}
+    canonicals = [json.loads(r["canonical"]) for r in rows]
+    types = {c["type"] for c in canonicals}
     assert "tool" in types, "expected a tool capsule"
     assert "chat" in types, "expected a chat capsule"
+    assert "system" in types, "expected an authorship system capsule"
+
+    # The authorship system capsule leads the chain and summarizes AI vs human work.
+    sys_caps = [c for c in canonicals if c["type"] == "system"]
+    assert sys_caps
+    auth = sys_caps[0]
+    assert canonicals[0]["type"] == "system", "authorship capsule should lead the chain"
+    assert "AI authorship" in auth["outcome"]["summary"]
+    structured = auth["outcome"]["result"]
+    assert structured["ai_authored_edits"] == 2, "two composer-sourced edits for this conv"
+    assert structured["total_tracked_edits"] == 3, "other conversation rows excluded"
+    assert "src/parser.py" in structured["files_touched"]
+    assert structured["commit_count"] >= 1
+    assert structured["commits"][0]["v2_ai_percentage"] == 0.8
 
     # Tool capsule should carry the tool name and prompt from the preceding user turn.
-    canonicals = [json.loads(r["canonical"]) for r in rows]
     tool_caps = [c for c in canonicals if c["type"] == "tool"]
     assert tool_caps
-    tc = tool_caps[0]
-    assert tc["execution"]["tool_calls"][0]["tool"] == "run_terminal_cmd"
+    run_caps = [c for c in tool_caps
+                if c["execution"]["tool_calls"][0]["tool"] == "run_terminal_cmd"]
+    assert run_caps
+    tc = run_caps[0]
     assert tc["trigger"]["request"] == "Please run the tests"
+    # Telemetry + plaintext reasoning landed on the run_terminal_cmd turn.
+    assert tc["context"]["environment"].get("turn_duration_ms") == 3400
+    assert tc["context"]["environment"].get("context_window", {}).get("token_limit") == 200000
+    assert "pytest" in tc["reasoning"]["reasoning"]
+
+    # The edit_file_v2 turn renders a diff and records the edited path.
+    edit_caps = [c for c in tool_caps
+                 if c["execution"]["tool_calls"][0]["tool"] == "edit_file_v2"]
+    assert edit_caps
+    ec = edit_caps[0]
+    assert any("edited src/parser.py" == s for s in ec["outcome"]["side_effects"]), \
+        "edit must record the edited path as a side effect"
+    assert "+" in ec["outcome"]["summary"] and "-" in ec["outcome"]["summary"], \
+        "edit summary should carry +/- line counts"
+    diff = ec["execution"]["tool_calls"][0]["result"]
+    assert isinstance(diff, str) and "+    return x.strip()" in diff
 
 
 def test_tamper_breaks_verification(env_home, tmp_path):

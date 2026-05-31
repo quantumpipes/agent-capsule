@@ -132,6 +132,90 @@ def first_text(content: Any) -> str:
     return ""
 
 
+# --------------------------------------------------------------------------- #
+# Rich-result enrichment: shape Claude Code's structured `toolUseResult` into
+# readable capsule content (a real diff for edits, stdout for Bash, a subagent
+# scorecard for Task, etc.) instead of dumping raw JSON that buries the signal.
+# --------------------------------------------------------------------------- #
+def _render_patch(structured_patch: list[dict[str, Any]]) -> tuple[str, int, int]:
+    """Render a structuredPatch into unified-diff text + (added, removed) counts."""
+    lines: list[str] = []
+    added = removed = 0
+    for h in structured_patch:
+        if not isinstance(h, dict):
+            continue
+        lines.append(f"@@ -{h.get('oldStart')},{h.get('oldLines')} "
+                     f"+{h.get('newStart')},{h.get('newLines')} @@")
+        for ln in h.get("lines", []) or []:
+            ln = str(ln)
+            lines.append(ln)
+            if ln.startswith("+"):
+                added += 1
+            elif ln.startswith("-"):
+                removed += 1
+    return "\n".join(lines), added, removed
+
+
+def enrich_tool(tool: str, args: Any, content: Any,
+                structured: Any) -> tuple[Any, str, list[str], Any]:
+    """Return (result, summary_extra, side_effects, structured_keep).
+
+    Surfaces the high-value content from Claude Code's ``toolUseResult`` and
+    trims the heavy raw fields (full original files, whole subagent transcripts)
+    so the capsule stays readable and under the size cap.
+    """
+    s = structured if isinstance(structured, dict) else {}
+    a = args if isinstance(args, dict) else {}
+    side: list[str] = []
+    extra = ""
+    result: Any = content
+
+    if tool in FILE_WRITE_TOOLS and isinstance(s.get("structuredPatch"), list):
+        diff, added, removed = _render_patch(s["structuredPatch"])
+        if diff:
+            result = diff
+            extra = f" (+{added}/-{removed})"
+        fp = s.get("filePath") or a.get("file_path") or ""
+        if fp:
+            side.append(f"{'wrote' if tool == 'Write' else 'edited'} {fp}")
+        if s.get("userModified"):
+            side.append("user modified after")
+        s = {k: v for k, v in s.items() if k != "originalFile"}  # drop the full file
+    elif tool == "Bash":
+        out, err = str(s.get("stdout") or ""), str(s.get("stderr") or "")
+        merged = out + (f"\n[stderr]\n{err}" if err else "")
+        if merged.strip():
+            result = merged
+        if s.get("interrupted"):
+            extra = " (interrupted)"
+    elif tool == "Read" and isinstance(s.get("file"), dict):
+        f = s["file"]
+        result = f.get("content", content)
+        if f.get("numLines") is not None:
+            extra = f" ({f['numLines']} lines)"
+    elif tool == "WebSearch" and isinstance(s.get("results"), list):
+        urls = [c.get("url") for r in s["results"] if isinstance(r, dict)
+                for c in (r.get("content") or []) if isinstance(c, dict) and c.get("url")]
+        result = {"query": s.get("query"), "urls": urls[:30]}
+        extra = f" ({len(urls)} results)"
+    elif tool == "WebFetch":
+        result = s.get("result", content)
+        if s.get("code") is not None:
+            extra = f" (HTTP {s.get('code')})"
+    elif tool in ("Agent", "Task"):
+        stats = s.get("toolStats") if isinstance(s.get("toolStats"), dict) else {}
+        sub = s.get("agentType") or a.get("subagent_type") or "subagent"
+        n = len(s.get("content") or []) if isinstance(s.get("content"), list) else 0
+        extra = (f" [{sub}: {stats.get('editFileCount', 0)} edits, "
+                 f"+{stats.get('linesAdded', 0)}/-{stats.get('linesRemoved', 0)}, "
+                 f"{s.get('totalToolUseCount', 0)} tool calls]")
+        side.append(f"delegated to {sub} subagent ({n} messages)")
+        # keep the scorecard, drop the (huge) full child transcript
+        s = {k: v for k, v in s.items() if k != "content"}
+        s["subagent_message_count"] = n
+    return result, extra, side, s
+
+
 def build_plan(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     results = index_tool_results(records)
     plan: list[dict[str, Any]] = []
@@ -232,16 +316,15 @@ def build_plan(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 ok = not res.get("is_error", False)
                 tool = tu.get("name", "?")
                 args = tu.get("input", {})
-                side: list[str] = []
-                if tool in FILE_WRITE_TOOLS and isinstance(args, dict) and args.get("file_path"):
-                    side.append(f"wrote {args['file_path']}")
+                result, extra, side, structured = enrich_tool(
+                    tool, args, res.get("content"), res.get("structured"))
                 plan.append({
                     **base, "key": f"{uuid}:{i}", "type": TYPE_TOOL,
                     "usage": usage if i == 0 else {}, "tool": tool, "tool_id": tid,
-                    "arguments": args, "result": res.get("content"),
-                    "structured": res.get("structured"), "side_effects": side, "success": ok,
+                    "arguments": args, "result": result,
+                    "structured": structured, "side_effects": side, "success": ok,
                     "duration_ms": _ts_ms(a_ts, res.get("ts")),
-                    "summary": tool_summary(tool, args) + (" (error)" if not ok else ""),
+                    "summary": tool_summary(tool, args) + extra + ("" if ok else " (error)"),
                     "status": "success" if ok else "failure",
                 })
         elif narrative or thinking:

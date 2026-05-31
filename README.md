@@ -145,7 +145,15 @@ Hand someone your chain JSON plus the public key and they can verify it with the
 
 ## What gets captured
 
-Per action, at full fidelity (whatever the tool exposes): the **prompt**, the **visible response**, the **tool call** (name, arguments, result, success, duration), **token usage**, the **permission/authority posture** (so you can see when an agent acted autonomously vs. with approval), and per-record provenance (cwd, git branch, model, timestamps). Each adapter records what its tool actually persists and marks what it cannot (for example, redacted reasoning is noted, not invented).
+Capsules record what an action *did*, not just that it ran:
+
+- **Real diffs** on every edit (a rendered unified diff with `(+N/-M)` counts).
+- **Full tool results**: actual stdout/stderr from commands, file contents from reads, queries and URLs from web search.
+- **The model's reasoning**, where the tool persists it (Claude Code redacts thinking text, so the capsule records the proof-of-reasoning signature instead).
+- **Subagent scorecards**: a delegated agent shows up as `[Explore: 2 edits, +14/-3, 9 tool calls]`.
+- **Cost and provenance**: token usage (cache + reasoning tokens), per-turn model and context telemetry, the permission/authority posture, and per-record cwd/git/timestamps. For Cursor, a per-conversation AI-authorship rollup from its code-tracking DB.
+
+Each adapter records what its tool actually persists and marks what it cannot (redacted reasoning is noted, not invented). Heavy blobs (whole files, base64 screenshots, full subagent transcripts) are summarized or referenced, never inlined, so the chain stays light. See [docs/data-model.md](docs/data-model.md).
 
 ---
 
