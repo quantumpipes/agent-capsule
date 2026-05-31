@@ -1,6 +1,7 @@
-# Installing claude-capsule with Claude Code
+# Installing Capsules for Claude Code
 
-This is the instruction set Claude Code follows to install claude-capsule. You
+This is the instruction set Claude Code follows to install the `claude-capsule`
+package (Capsules for Claude Code). You
 do not run these steps by hand; you paste the short prompt from the
 [README](README.md#install-with-claude-code-copy--paste) and Claude Code reads
 this page and does all of it. The steps are written for the agent.

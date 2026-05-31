@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🔐 claude-capsule
+# 🔐 Capsules for Claude Code
 
 ### Cryptographic receipts for everything your AI coding agent does.
 
@@ -44,7 +44,7 @@ That second line is the whole point. You cannot rewrite history without leaving 
 
 ## Install in 30 seconds
 
-Paste this into a Claude Code session and it does everything (installs, wires the hooks, verifies itself):
+Capsules for Claude Code ships as the `claude-capsule` package (the `claude-capsule` and `claude-capsule-hook` commands). Paste this into a Claude Code session and it does everything (installs, wires the hooks, verifies itself):
 
 ```text
 Install claude-capsule by fetching and following every step in
