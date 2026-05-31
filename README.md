@@ -43,6 +43,39 @@ That second line is the whole point. You cannot rewrite history without leaving 
 
 ---
 
+## Install: paste this to your agent
+
+Paste this into a session with **any** of the supported agents (Claude Code, Cursor, Codex, or Cline) and it installs everything, wires up that agent's hook, and verifies itself:
+
+```text
+Set up agent-capsule so this coding session and every future one is sealed into a
+tamper-evident, cryptographically signed audit trail. Do all of this for me:
+
+1. Install the package (try pipx first, fall back to pip --user):
+     pipx install git+https://github.com/quantumpipes/agent-capsule
+   or:
+     python3 -m pip install --user git+https://github.com/quantumpipes/agent-capsule
+   Confirm `agent-capsule --help` runs (use its absolute path if not on PATH).
+
+2. Work out which AI coding tool you are running inside and register its hook:
+     agent-capsule install claude-code     # you are Claude Code
+     agent-capsule install cursor          # you are Cursor
+     agent-capsule install codex           # you are Codex
+     agent-capsule install cline           # you are Cline
+   If unsure, install for every one of those tools whose config exists on this
+   machine. Each command is idempotent and never clobbers existing config.
+
+3. Confirm: run `agent-capsule list`, then tell me which hooks are now
+   registered, that chains land in ~/.agent-capsule/chains/<tool>/, and that my
+   signing key at ~/.agent-capsule/key stays local (only the public key is shared).
+
+Do not print my key material.
+```
+
+Prefer to do it by hand? See [Manual install](#manual-install) below.
+
+---
+
 ## Supported tools
 
 | Tool | Trigger it uses | Install |
@@ -56,7 +89,7 @@ Each has a one-page guide in [`docs/tools/`](docs/tools/) with the exact trigger
 
 ---
 
-## Install in 60 seconds
+## Manual install
 
 ```bash
 # 1. Install the package (Python 3.11+; only runtime dep is PyNaCl)
