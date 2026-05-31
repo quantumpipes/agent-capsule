@@ -48,7 +48,7 @@ That second line is the whole point. You cannot rewrite history without leaving 
 Paste this into a session with **any** supported agent (Claude Code, Cursor, Codex, or Cline):
 
 ```text
-Install agent-capsule so this coding session is sealed into a tamper-evident audit trail.
+Install agent-capsule so all my coding sessions, from now on, are sealed into a tamper-evident audit trail.
 Fetch https://raw.githubusercontent.com/quantumpipes/agent-capsule/main/INSTALL.md and do
 every step for whichever agent you are, then confirm the hook is registered.
 ```
