@@ -1,5 +1,9 @@
 # Capsule wire format
 
+> The whole trust model rests on one idea: the format is open, so you never have
+> to trust us. Re-implement the three checks below in any language and you will
+> get the same verdict on the same chain.
+
 This document defines the exact bytes. Any implementation that follows it
 produces chains verifiable by this tool's CLI and by the in-browser explorer,
 and vice versa.

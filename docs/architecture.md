@@ -1,5 +1,10 @@
 # Architecture
 
+> One sentence: a hook turns the session transcript into signed, hash-linked
+> records in SQLite; an exporter ships those records (plus the public key) to a
+> static site that re-verifies them in your browser. Everything below is detail.
+
+
 ```
 ┌─────────────────────┐
 │  Claude Code session │

@@ -1,42 +1,44 @@
-# claude-capsule
+<div align="center">
 
-**A tamper-evident audit trail for your Claude Code sessions.**
+# 🔐 claude-capsule
 
-A Claude Code hook seals every conversation into a cryptographic hashchain: one
-signed record (a *capsule*) per tool call and per response, each linked to the
-last by hash. A companion explorer re-verifies the whole chain **in your
-browser, offline**: recomputes every SHA3-256 hash and checks every Ed25519
-signature, with no backend and nothing to trust.
+### Cryptographic receipts for everything your AI coding agent does.
 
-If anyone (or any process) edits, reorders, inserts, or deletes a record after
-the fact, verification breaks at the exact point of tampering.
+Every Claude Code session, sealed into a **tamper-evident hashchain** you can verify yourself: in your browser, offline, with nothing to trust but the math.
 
-```
-Claude Code session
-      │  (Stop + SessionEnd hooks fire)
-      ▼
-capsule_chain hook ──► ~/.claude-capsule/chains/<session>.db   (signed, linked capsules)
-      │
-      │  claude-capsule export
-      ▼
-explorer/public/data/chains/*.json ──► Capsule Explorer (re-verifies in-browser, offline)
-```
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Built for Claude Code](https://img.shields.io/badge/built%20for-Claude%20Code-d97757.svg)](https://docs.claude.com/en/docs/claude-code)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB.svg?logo=python&logoColor=white)](pyproject.toml)
+[![Crypto](https://img.shields.io/badge/crypto-SHA3--256%20%2B%20Ed25519-2ea44f.svg)](docs/wire-format.md)
+[![Verify](https://img.shields.io/badge/verify-in%20your%20browser-9cf.svg)](explorer/)
+[![One dependency](https://img.shields.io/badge/runtime%20deps-just%20PyNaCl-orange.svg)](pyproject.toml)
 
-- **What it captures per action:** the prompt, the visible response, the full
-  tool input + result, token usage, the permission mode, and proof-of-reasoning
-  (Claude Code redacts extended-thinking text, so the thinking *signatures* are
-  carried forward as evidence the model reasoned, with a `thinking_redacted` flag).
-- **Crypto:** SHA3-256 content hash, Ed25519 signature over the hash, hash-linked
-  chain. Verifiable by anyone holding the public key.
-- **Offline-first:** no network, no telemetry, no account. Your session history
-  never leaves your machine. The signing key lives at `~/.claude-capsule/key`.
-- **One dependency:** PyNaCl. That is the whole runtime footprint of the writer.
+</div>
 
 ---
 
-## Install with Claude Code (copy / paste)
+Your AI agent edits files, runs commands, and makes decisions in your repo, often with permissions to act on its own. A chat log of that is just editable text: anyone can quietly change it later and you would never know.
 
-The fastest way to install. Paste this into a Claude Code session:
+**claude-capsule turns each session into a signed, linked chain of records.** Change one byte of what the AI "did" after the fact, and verification breaks at the exact spot. It is the difference between *remembering* what happened and being able to *prove* it.
+
+```console
+# Every session becomes a chain. Verify the whole thing, signatures and all:
+$ claude-capsule verify ~/.claude-capsule/chains/today.db --signatures
+[OK] today.db: 128/128 verified (head 9c8ec07009b2d759)
+
+# Now edit one byte of what the AI did, and the chain tells on you,
+# at the exact record where the tampering happened:
+$ claude-capsule verify ~/.claude-capsule/chains/today.db --signatures
+[BROKEN] today.db: 41/128 verified (broken at seq 41: content hash mismatch at 41)
+```
+
+That second line is the whole point. You cannot rewrite history without leaving a mark.
+
+---
+
+## Install in 30 seconds
+
+Paste this into a Claude Code session and it does everything (installs, wires the hooks, verifies itself):
 
 ```text
 Install claude-capsule by fetching and following every step in
@@ -44,164 +46,188 @@ https://raw.githubusercontent.com/quantumpipes/claude-capsule/main/INSTALL.md
 then confirm the hooks are registered.
 ```
 
-Claude Code reads the [install guide](INSTALL.md), installs the package, wires up
-the `Stop` and `SessionEnd` hooks, verifies the install, and reports back. That is
-all most people need. The sections below are the manual path and the reference.
-
----
-
-## Manual install
+<details>
+<summary><b>Prefer to do it yourself?</b> (one command)</summary>
 
 ```bash
-# 1. Install the writer (Python 3.11+; only dependency is PyNaCl)
 pipx install git+https://github.com/quantumpipes/claude-capsule
-# or: python3 -m pip install --user git+https://github.com/quantumpipes/claude-capsule
-
-# 2. Register the hook (idempotent; merges into ~/.claude/settings.json)
 curl -fsSL https://raw.githubusercontent.com/quantumpipes/claude-capsule/main/install.sh | bash
 ```
 
-Or wire the hook by hand in `~/.claude/settings.json`:
+`install.sh` registers the `Stop` and `SessionEnd` hooks in `~/.claude/settings.json`
+idempotently, without touching hooks you already have. Full detail in [INSTALL.md](INSTALL.md).
 
-```json
-{
-  "hooks": {
-    "Stop":       [ { "hooks": [ { "type": "command", "command": "claude-capsule-hook" } ] } ],
-    "SessionEnd": [ { "hooks": [ { "type": "command", "command": "claude-capsule-hook" } ] } ]
-  }
-}
+</details>
+
+From that moment on, every Claude Code session appends to a chain at `~/.claude-capsule/chains/<session>.db`. You do nothing else. It runs on session stop, stays out of your way, and is fail-open: if anything goes wrong it logs and exits cleanly, so it can never block or slow a session.
+
+---
+
+## How it works
+
+One **capsule** is recorded per action: each tool call, each response, each attachment. A capsule answers six questions about that action (what triggered it, the context, the reasoning, who authorized it, what executed, the outcome), then it is hashed, signed, and linked to the one before it.
+
+```
+   prompt           tool call          tool call          response
+ ┌──────────┐     ┌──────────┐      ┌──────────┐      ┌──────────┐
+ │  seq 0   │     │  seq 1   │      │  seq 2   │      │  seq 3   │
+ │ 🔏 signed │─────│ 🔏 signed │──────│ 🔏 signed │──────│ 🔏 signed │ ── ...
+ │ hash ab12│ ◄─┐ │ prev ab12│ ◄──┐ │ prev cd34│ ◄──┐ │ prev ef56│
+ └──────────┘   │ └──────────┘    │ └──────────┘    │ └──────────┘
+                └─ each capsule    └─ stores the     └─ so editing ANY
+                   carries the        previous one's    capsule changes its
+                   hash of all        hash, forming     hash, which breaks
+                   its content        an unbroken       every link after it
+                                      chain
 ```
 
-From now on, every Claude Code session appends to a chain at
-`~/.claude-capsule/chains/<session-id>.db`. The `Stop` hook appends incrementally
-as the session runs; the `SessionEnd` hook does a final append and verifies the
-chain.
+Three primitives, no magic:
+
+| Step | Mechanism |
+|------|-----------|
+| **Hash** | `SHA3-256` over the capsule's canonical JSON (the exact bytes are pinned, see [wire-format](docs/wire-format.md)) |
+| **Sign** | `Ed25519` signature over that hash, with a key generated on first use at `~/.claude-capsule/key` (`0600`, never leaves your machine) |
+| **Chain** | each capsule stores the previous capsule's hash + a sequence number, so the records form one unbroken line |
+
+Verification re-derives the hash from the content, checks the signature against the public key, and checks the links. The Python CLI does it. The browser explorer does it. They agree byte for byte.
+
+> **Why a chain and not just signatures?** A signature proves one record is authentic. A *chain* proves the whole *history* is intact: you cannot delete, reorder, or insert a record in the middle without breaking every link downstream. Tamper evidence for the timeline, not just the entries.
+
+---
+
+## See it: verify in your browser, offline
+
+The companion **Capsule Explorer** is a static site that re-verifies your chains entirely client-side. It recomputes every SHA3-256 hash and checks every Ed25519 signature with audited [`@noble`](https://github.com/paulmillr/noble-hashes) libraries. No backend. No network. No account. Just open it and watch the green checkmarks land.
+
+```bash
+git clone https://github.com/quantumpipes/claude-capsule
+cd claude-capsule/explorer
+npm install && npm run export && npm run dev   # http://localhost:4840
+```
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  🔐 Capsule Explorer                         128 capsules · all valid ✅ │
+├───────────────┬──────────────────────────┬─────────────────────────────┤
+│  CHAINS       │  TIMELINE                 │  CAPSULE  seq 41            │
+│               │                           │                             │
+│ ▸ today  128  │  #39 tool   Write greet.py│  type      tool             │
+│   mon-am  64  │  #40 chat   "Done. The..."│  hash      9c8ec070…  ✅     │
+│   review  31  │  #41 tool   Bash pytest ◄ │  signature f0a1…       ✅     │
+│               │  #42 tool   Edit README   │  prev_hash bd7b…       ✅     │
+│               │  #43 chat   "All green."  │  ───────────────────────────│
+│               │                           │  Re-verified in-browser ✅   │
+└───────────────┴──────────────────────────┴─────────────────────────────┘
+```
+
+There is a **tamper test** built in: flip a byte and the explorer scrolls straight to the break. Hand someone your chain JSON plus the public key and they can verify it with the explorer or any SHA3-256 + Ed25519 implementation on earth. You are never asking anyone to trust you. You are handing them the proof.
+
+<!-- TODO: replace the ASCII mock above with a real screenshot/GIF of the explorer once captured. -->
+
+---
+
+## What gets captured
+
+Per action, in full fidelity:
+
+- **The prompt** that drove it and **the visible response**
+- **The tool call**: name, full arguments, result, success/failure, duration
+- **Token usage**, the **permission mode** (so you can see when the agent acted autonomously vs. with approval), and per-record provenance (cwd, git branch, model, timestamps)
+- **Proof of reasoning.** Claude Code redacts extended-thinking text from the stored transcript (only a cryptographic signature survives), so claude-capsule carries those *thinking signatures* forward as evidence the model reasoned, with a `thinking_redacted` flag. The honest thing: it records what the platform exposes, and marks what it cannot.
+
+---
+
+## Who this is for
+
+| You are... | What you get |
+|------------|--------------|
+| 🏛️ **In a regulated or audited shop** (finance, health, gov, defense) | A signed, timestamped record of every AI action, ready for review |
+| 🤖 **Running agents with elevated permissions** (`acceptEdits`, `bypassPermissions`) | Proof of exactly what the agent did while acting on its own |
+| 🔍 **Doing incident or code review** | "Did the AI actually run that command?" answered with a hash, not a hunch |
+| 🛡️ **Security-minded, or just curious** | A real cryptographic chain over your own work that you can break, verify, and show off |
+
+If you have ever wanted a *receipt* for what your AI did, this is that.
 
 ---
 
 ## Command line
 
 ```bash
-claude-capsule verify  <chain.db> [--signatures]   # recompute hashes + links (and sigs); report breaks
-claude-capsule inspect <chain.db> [--seq N]        # list capsules, or print one in full
+claude-capsule verify  <chain.db> [--signatures]            # recompute hashes + links (+ signatures)
+claude-capsule inspect <chain.db> [--seq N]                 # list capsules, or print one in full
 claude-capsule export  --out DIR [--db PATH] [--glob PAT]   # write the explorer's JSON bundle
 ```
 
-```text
-$ claude-capsule verify ~/.claude-capsule/chains/<id>.db --signatures
-[OK] <id>.db: 42/42 verified (head 9c8ec07009b2d759)
-
-$ claude-capsule inspect ~/.claude-capsule/chains/<id>.db
-#  0 tool    bd7b9cc27654 add a hello function
-#  1 chat    9c8ec07009b2 add a hello function
+```console
+$ claude-capsule inspect ~/.claude-capsule/chains/today.db
+#  0 tool    bd7b9cc27654 add a hello function to greet.py
+#  1 tool    e37d8433f0bf add a hello function to greet.py
+#  2 chat    9023e5ba02a9 add a hello function to greet.py
 ```
 
-The hook is also runnable directly for testing:
-
-```bash
-claude-capsule-hook --transcript path/to/session.jsonl --session my-id --finalize
-```
+Want to try the whole loop right now without a real session? The [`examples/`](examples/) folder ships a synthetic transcript and a five-line walkthrough.
 
 ---
 
-## The explorer
+## Storage and privacy
 
-A static Astro + React site that loads the exported JSON and re-verifies every
-capsule client-side (`@noble/hashes` + `@noble/ed25519`). No backend.
+| | |
+|---|---|
+| **Default** | one SQLite file per session at `~/.claude-capsule/chains/<session>.db` (one independent chain each) |
+| **Shared** | set `CLAUDE_CAPSULE_DB=~/.claude-capsule/all.db` for a single file, chains grouped by session |
+| **Your key** | `~/.claude-capsule/key`, generated on first use, `0600`, stays local. Only the **public** key is shared, so anyone can verify and no one can forge. |
+| **Network** | none. No telemetry, no account, no calls out. Your session history is yours. |
 
-```bash
-cd explorer
-npm install
-npm run export   # reads ~/.claude-capsule/chains/*.db -> public/data/chains/*.json
-npm run dev      # http://localhost:4840
-npm test         # recomputes SHA3-256 + Ed25519 over the real exported chains
-```
-
-It shows a chains rail, a per-capsule timeline, and a detail pane, with in-browser
-re-verification and a tamper test that scrolls to the exact break point.
-
----
-
-## How it works
-
-See [`docs/architecture.md`](docs/architecture.md) for the full picture and
-[`docs/wire-format.md`](docs/wire-format.md) for the exact bytes.
-
-In short:
-
-1. **Hooks are triggers; the transcript is truth.** On `Stop`/`SessionEnd`,
-   Claude Code hands the hook the session id and transcript path. The hook parses
-   the transcript JSONL rather than the event payload, so it captures the full
-   picture (prompts, responses, tool I/O, usage, permission mode).
-2. **One capsule per action.** Each tool call becomes a `tool` capsule; each
-   assistant answer becomes a `chat` capsule; attachments become `system`
-   capsules. Repeated hook fires are idempotent (a per-session checkpoint tracks
-   what is already sealed).
-3. **Seal + link.** Each capsule's canonical JSON is hashed with SHA3-256, the
-   hash hex string is signed with Ed25519, and the capsule records the previous
-   capsule's hash and a sequence number, forming the chain.
-4. **Verify anywhere.** Re-derive the hash from the canonical bytes, check it
-   matches, check the signature against the public key, and check the links and
-   sequence. The CLI does this; the browser does this; they agree byte-for-byte.
-
-The hook is **fail-open**: any error is logged to `~/.claude-capsule/hook.log`
-and it exits 0, so it can never block or stall a Claude Code session.
-
----
-
-## Storage
-
-| Mode | How | Result |
-|------|-----|--------|
-| Per-session (default) | nothing to set | `~/.claude-capsule/chains/<session>.db`, one independent chain each |
-| Shared | `export CLAUDE_CAPSULE_DB=~/.claude-capsule/all.db` | one file, chains grouped by session id |
-
----
-
-## Security model
-
-- The signing key (`~/.claude-capsule/key`, 32 Ed25519 private bytes, `0600`) is
-  generated on first use and never leaves your machine. Only the **public** key
-  is shipped in the export bundle.
-- Tamper evidence, not tamper *prevention*: anyone who can write to the DB can
-  rewrite history, but they cannot do so **undetectably** without your private
-  key. Re-verification surfaces any edit, reorder, insert, or delete.
-- For an independent third party to verify your chain, share the per-chain JSON
-  plus the public key. They re-verify with the explorer or any SHA3-256 + Ed25519
-  implementation.
-- No network, no telemetry. Report vulnerabilities per [`SECURITY.md`](SECURITY.md).
-
----
-
-## Uninstall
-
-1. Remove the two `claude-capsule-hook` entries from `~/.claude/settings.json`.
-2. `pipx uninstall claude-capsule` (or `pip uninstall claude-capsule`).
-3. Optionally delete your data: `rm -rf ~/.claude-capsule` (this includes your
-   signing key and all chains; it is irreversible).
+See [SECURITY.md](SECURITY.md) for the full trust model (tamper *evidence*, what the key protects, and how to share a chain safely).
 
 ---
 
 ## FAQ
 
-**Does this capture my extended thinking?** No. Claude Code strips
-extended-thinking text from the stored transcript (only a cryptographic
-signature survives). The hook records those signatures as proof the model
-reasoned, plus a `thinking_redacted` flag. The visible response prose is captured
-in full.
+<details>
+<summary><b>Does this capture my private extended thinking?</b></summary>
 
-**Will it slow down or break my sessions?** No. It runs on `Stop`/`SessionEnd`,
-does bounded work, and is fail-open: errors are logged and the process exits 0.
+No. Claude Code strips extended-thinking text from the stored transcript before any hook sees it; only a cryptographic signature remains. claude-capsule records those signatures as proof the model reasoned, plus a `thinking_redacted` flag. Your visible responses are captured in full.
+</details>
 
-**Is my data sent anywhere?** Never. Everything is local files.
+<details>
+<summary><b>Will it slow down or break my sessions?</b></summary>
 
-**Can I verify a chain without this tool?** Yes. The format is open SHA3-256 +
-Ed25519 over canonical JSON (see [`docs/wire-format.md`](docs/wire-format.md)).
-The browser verifier uses only MIT-licensed `@noble/*` libraries.
+No. It runs on `Stop`/`SessionEnd`, does bounded work, and is fail-open: any error is logged to `~/.claude-capsule/hook.log` and the process exits 0. An audit tool must never be able to break the thing it audits.
+</details>
+
+<details>
+<summary><b>Can I verify a chain without trusting this tool?</b></summary>
+
+Yes, that is the entire design. The format is open: SHA3-256 + Ed25519 over canonical JSON ([docs/wire-format.md](docs/wire-format.md)). The browser verifier uses only audited MIT-licensed `@noble` libraries. Re-implement it in any language and you will get the same answer.
+</details>
+
+<details>
+<summary><b>Is anything sent anywhere?</b></summary>
+
+Never. Everything is local SQLite files and a static site. There is no server to send to.
+</details>
+
+---
+
+## Documentation
+
+| Doc | What's inside |
+|-----|---------------|
+| 📦 [INSTALL.md](INSTALL.md) | The full install guide (and what the paste prompt runs) |
+| 🧬 [docs/wire-format.md](docs/wire-format.md) | The exact bytes: canonical JSON, hashing, the signature scheme |
+| 🏗️ [docs/architecture.md](docs/architecture.md) | How the hook, chain, and explorer fit together |
+| 🛡️ [SECURITY.md](SECURITY.md) | The trust model and key handling |
+| 🧪 [examples/](examples/) | A synthetic session you can seal and verify in a minute |
 
 ---
 
 ## License
 
-Apache License 2.0. Copyright 2026 Quantum Pipes Technologies, LLC. See
-[`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+[Apache License 2.0](LICENSE). Copyright 2026 Quantum Pipes Technologies, LLC. Built for the [Claude Code](https://docs.claude.com/en/docs/claude-code) community.
+
+<div align="center">
+
+**If a tamper-evident record of your AI's work sounds useful, [star the repo](https://github.com/quantumpipes/claude-capsule) and seal your next session.**
+
+</div>
