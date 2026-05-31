@@ -13,6 +13,12 @@ Every Claude Code session, sealed into a **tamper-evident hashchain** you can ve
 [![Verify](https://img.shields.io/badge/verify-in%20your%20browser-9cf.svg)](explorer/)
 [![One dependency](https://img.shields.io/badge/runtime%20deps-just%20PyNaCl-orange.svg)](pyproject.toml)
 
+<br>
+
+<img src="docs/media/explorer-verified.png" alt="The Capsule Explorer re-verifying a Claude Code session in the browser: every capsule shows a green SHA3-256, Ed25519, and chain-link check" width="920">
+
+<sub>The Capsule Explorer re-verifying a real session in the browser. Every capsule's hash, signature, and chain link, checked client-side. No backend.</sub>
+
 </div>
 
 ---
@@ -68,17 +74,15 @@ From that moment on, every Claude Code session appends to a chain at `~/.claude-
 One **capsule** is recorded per action: each tool call, each response, each attachment. A capsule answers six questions about that action (what triggered it, the context, the reasoning, who authorized it, what executed, the outcome), then it is hashed, signed, and linked to the one before it.
 
 ```
-   prompt           tool call          tool call          response
- ┌──────────┐     ┌──────────┐      ┌──────────┐      ┌──────────┐
- │  seq 0   │     │  seq 1   │      │  seq 2   │      │  seq 3   │
- │ 🔏 signed │─────│ 🔏 signed │──────│ 🔏 signed │──────│ 🔏 signed │ ── ...
- │ hash ab12│ ◄─┐ │ prev ab12│ ◄──┐ │ prev cd34│ ◄──┐ │ prev ef56│
- └──────────┘   │ └──────────┘    │ └──────────┘    │ └──────────┘
-                └─ each capsule    └─ stores the     └─ so editing ANY
-                   carries the        previous one's    capsule changes its
-                   hash of all        hash, forming     hash, which breaks
-                   its content        an unbroken       every link after it
-                                      chain
+    prompt            tool call          tool call          response
+ ┌────────────┐    ┌────────────┐    ┌────────────┐    ┌────────────┐
+ │  seq 0     │──▶ │  seq 1     │──▶ │  seq 2     │──▶ │  seq 3     │──▶ ...
+ │  hash ab12 │    │  prev ab12 │    │  prev cd34 │    │  prev ef56 │
+ │  signed    │    │  signed    │    │  signed    │    │  signed    │
+ └────────────┘    └────────────┘    └────────────┘    └────────────┘
+
+   Each capsule stores the previous one's hash, so changing any capsule
+   changes its own hash and breaks every link after it.
 ```
 
 Three primitives, no magic:
@@ -105,24 +109,15 @@ cd claude-capsule/explorer
 npm install && npm run export && npm run dev   # http://localhost:4840
 ```
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│  🔐 Capsule Explorer                         128 capsules · all valid ✅ │
-├───────────────┬──────────────────────────┬─────────────────────────────┤
-│  CHAINS       │  TIMELINE                 │  CAPSULE  seq 41            │
-│               │                           │                             │
-│ ▸ today  128  │  #39 tool   Write greet.py│  type      tool             │
-│   mon-am  64  │  #40 chat   "Done. The..."│  hash      9c8ec070…  ✅     │
-│   review  31  │  #41 tool   Bash pytest ◄ │  signature f0a1…       ✅     │
-│               │  #42 tool   Edit README   │  prev_hash bd7b…       ✅     │
-│               │  #43 chat   "All green."  │  ───────────────────────────│
-│               │                           │  Re-verified in-browser ✅   │
-└───────────────┴──────────────────────────┴─────────────────────────────┘
-```
+<div align="center">
+
+<img src="docs/media/explorer-demo.gif" alt="Verifying a chain (every check turns green), then tampering with one capsule: verification breaks at the exact record and every link after it" width="880">
+
+<sub>Verify the chain (every check turns green), then tamper with one capsule. Verification breaks at the exact record, and at every link after it.</sub>
+
+</div>
 
 There is a **tamper test** built in: flip a byte and the explorer scrolls straight to the break. Hand someone your chain JSON plus the public key and they can verify it with the explorer or any SHA3-256 + Ed25519 implementation on earth. You are never asking anyone to trust you. You are handing them the proof.
-
-<!-- TODO: replace the ASCII mock above with a real screenshot/GIF of the explorer once captured. -->
 
 ---
 
