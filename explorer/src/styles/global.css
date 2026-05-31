@@ -1,0 +1,412 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   Self-hosted fonts. Zero external requests, zero IP leakage.
+   Files live in /public/fonts/ and ship verbatim with the static build.
+
+   Each family ships as a Latin-only subset (~30 KB) declared first with
+   a unicode-range, plus the full file as a fallback. Browsers only fetch
+   the full file if a character outside the subset is rendered, which
+   doesn't happen on an English-language marketing surface.
+   ============================================================================ */
+
+/* --- Inter: body. Latin-only subset; non-Latin glyphs fall through
+       to the OS font stack defined in tailwind.config sans family. --- */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("/fonts/inter-latin.woff2") format("woff2");
+}
+
+/* --- Outfit: display. Latin-only subset. --- */
+@font-face {
+  font-family: "Outfit";
+  font-style: normal;
+  font-weight: 500 800;
+  font-display: swap;
+  src: url("/fonts/outfit-latin.woff2") format("woff2");
+}
+
+/* --- JetBrains Mono: code surfaces only --- */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 500;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono.woff2") format("woff2");
+}
+
+/* ============================================================================
+   QUANTUM PIPES - Design System
+   Orange primary with amber accents on deep space backgrounds.
+   ============================================================================ */
+
+@theme {
+  /* PRIMARY PALETTE - Quantum Pipes Orange */
+  --color-primary-50: #fff7ed;
+  --color-primary-100: #ffedd5;
+  --color-primary-200: #fed7aa;
+  --color-primary-300: #fdba74;
+  --color-primary-400: #fb923c;
+  --color-primary-500: #f97316;
+  --color-primary-600: #ea580c;
+  --color-primary-700: #c2410c;
+  --color-primary-800: #9a3412;
+  --color-primary-900: #7c2d12;
+  --color-primary-950: #431407;
+
+  /* ACCENT PALETTE - Amber Warmth */
+  --color-accent-50: #fffbeb;
+  --color-accent-100: #fef3c7;
+  --color-accent-200: #fde68a;
+  --color-accent-300: #fcd34d;
+  --color-accent-400: #fbbf24;
+  --color-accent-500: #f59e0b;
+  --color-accent-600: #d97706;
+  --color-accent-700: #b45309;
+  --color-accent-800: #92400e;
+  --color-accent-900: #78350f;
+
+  /* SURFACE PALETTE - Deep Space */
+  --color-surface-0: #0a0a0c;
+  --color-surface-1: #131316;
+  --color-surface-2: #1c1c21;
+  --color-surface-3: #26262d;
+  --color-surface-4: #32323b;
+
+  /* SEMANTIC COLORS */
+  --color-success-400: #4ade80;
+  --color-success-500: #22c55e;
+  --color-success-600: #16a34a;
+
+  --color-warning-400: #facc15;
+  --color-warning-500: #eab308;
+  --color-warning-600: #ca8a04;
+
+  --color-error-400: #f87171;
+  --color-error-500: #ef4444;
+  --color-error-600: #dc2626;
+
+  --color-info-400: #60a5fa;
+  --color-info-500: #3b82f6;
+  --color-info-600: #2563eb;
+
+  /* TYPOGRAPHY */
+  --font-display: "Outfit", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+
+  /* ANIMATION EASING */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out-expo: cubic-bezier(0.87, 0, 0.13, 1);
+}
+
+/* ============================================================================
+   BASE LAYER
+   ============================================================================ */
+
+@layer base {
+  * {
+    @apply border-white/[0.08];
+  }
+
+  html {
+    @apply scroll-smooth;
+    /* iOS rotates portrait→landscape and "helpfully" inflates body text.
+       Lock to author-intended sizing. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    /* Defensive: any rogue absolute glow, transform, or wide grid
+       inside a section that forgot `overflow-hidden` would otherwise
+       trigger a body-level horizontal scroll. Lock the page width. */
+    overflow-x: hidden;
+  }
+
+  body {
+    @apply bg-surface-0 text-slate-100 font-body antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    /* Kill the gray flash on tap. We have explicit :active states. */
+    -webkit-tap-highlight-color: transparent;
+    overflow-x: hidden;
+  }
+
+  /* Ensure inputs never trigger iOS auto-zoom (≥16px font-size). */
+  input, select, textarea {
+    font-size: 16px;
+  }
+  @media (min-width: 768px) {
+    input, select, textarea { font-size: inherit; }
+  }
+
+  ::-webkit-scrollbar {
+    @apply w-2 h-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-white/10 rounded-full transition-colors;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-white/20;
+  }
+
+  ::selection {
+    @apply bg-primary-500/40 text-white;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary-500/50 ring-offset-2 ring-offset-surface-0;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display;
+  }
+}
+
+/* ============================================================================
+   COMPONENT LAYER
+   ============================================================================ */
+
+@layer components {
+  .glass {
+    @apply bg-white/[0.03] backdrop-blur-xl border border-white/[0.06];
+  }
+
+  .glow-primary {
+    box-shadow:
+      0 0 20px rgb(249 115 22 / 0.35),
+      0 0 40px rgb(249 115 22 / 0.15);
+  }
+
+  .glow-primary-lg {
+    box-shadow:
+      0 0 30px rgb(249 115 22 / 0.4),
+      0 0 60px rgb(249 115 22 / 0.2),
+      0 0 100px rgb(249 115 22 / 0.1);
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #fbbf24 0%, #fb923c 50%, #f97316 100%);
+  }
+}
+
+/* ============================================================================
+   UTILITY LAYER
+   ============================================================================ */
+
+@layer utilities {
+  .animation-delay-75 { animation-delay: 75ms; }
+  .animation-delay-100 { animation-delay: 100ms; }
+  .animation-delay-150 { animation-delay: 150ms; }
+  .animation-delay-200 { animation-delay: 200ms; }
+  .animation-delay-300 { animation-delay: 300ms; }
+  .animation-delay-400 { animation-delay: 400ms; }
+  .animation-delay-500 { animation-delay: 500ms; }
+  .animation-delay-700 { animation-delay: 700ms; }
+
+  .bg-gradient-radial {
+    background: radial-gradient(circle, var(--tw-gradient-stops));
+  }
+
+  /* Safe-area padding for sticky chrome on notched devices.
+     Use `pt-safe` on sticky headers, `pb-safe` on bottom-anchored bars. */
+  .pt-safe { padding-top: max(1rem, env(safe-area-inset-top)); }
+  .pb-safe { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+  .pl-safe { padding-left: max(1.5rem, env(safe-area-inset-left)); }
+  .pr-safe { padding-right: max(1.5rem, env(safe-area-inset-right)); }
+
+  /* Horizontal-scroll tab strip on touch: snap to chips, hide scrollbar,
+     give content scroll-padding so the active chip lands in-frame
+     when programmatically scrolled into view. */
+  .scroll-snap-x {
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline: 1rem;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .scroll-snap-x::-webkit-scrollbar { display: none; }
+  .scroll-snap-item { scroll-snap-align: start; }
+
+  /* Fade the trailing edge of a horizontal scroller so users see there's
+     more. Works in light + dark; relies on the parent having a solid
+     surface color underneath. */
+  .scroll-fade-r {
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 32px), transparent 100%);
+    mask-image: linear-gradient(to right, black calc(100% - 32px), transparent 100%);
+  }
+}
+
+/* ============================================================================
+   KEYFRAME ANIMATIONS
+   ============================================================================ */
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+@keyframes nebula-pulse {
+  0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
+  50% { opacity: 0.3; transform: translate(-50%, -50%) scale(1.08); }
+}
+
+@keyframes fade-slide-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ============================================================================
+   ANIMATION CLASSES
+   ============================================================================ */
+
+.animate-glow-pulse {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+.animate-nebula-pulse {
+  animation: nebula-pulse 10s ease-in-out infinite;
+}
+
+.animate-fade-slide-up {
+  animation: fade-slide-up 0.7s var(--ease-out-expo) forwards;
+  opacity: 0;
+}
+
+.animate-gradient-shift {
+  background-size: 200% 200%;
+  animation: gradient-shift 4s ease-in-out infinite;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+/* Data flow animations (About page) */
+
+@keyframes data-leak {
+  0% { transform: translate(0, 0); opacity: 1; }
+  100% { transform: translate(var(--dx, 40px), var(--dy, -30px)); opacity: 0; }
+}
+
+@keyframes orbit {
+  0% { transform: rotate(0deg) translateX(var(--orbit-r, 24px)) rotate(0deg); }
+  100% { transform: rotate(360deg) translateX(var(--orbit-r, 24px)) rotate(-360deg); }
+}
+
+.animate-data-leak {
+  animation: data-leak 2s ease-out infinite;
+}
+
+.animate-orbit {
+  animation: orbit var(--orbit-duration, 3s) linear infinite;
+}
+
+@keyframes float-blob {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(30px, -20px) scale(1.05); }
+  66% { transform: translate(-20px, 15px) scale(0.95); }
+}
+
+.animate-float-blob {
+  animation: float-blob 8s ease-in-out infinite;
+}
+
+/* Network topology diagram animations */
+
+@keyframes dash-flow {
+  to { stroke-dashoffset: -20; }
+}
+
+@keyframes core-breathe {
+  0%, 100% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.15), 0 0 60px rgba(16, 185, 129, 0.05); }
+  50% { box-shadow: 0 0 30px rgba(16, 185, 129, 0.3), 0 0 80px rgba(16, 185, 129, 0.1); }
+}
+
+.animate-core-breathe {
+  animation: core-breathe 3s ease-in-out infinite;
+}
+
+.animate-dash-flow {
+  animation: dash-flow 1s linear infinite;
+}
+
+/* ============================================================================
+   ACCESSIBILITY - Reduced Motion Support
+   ============================================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-glow-pulse,
+  .animate-nebula-pulse,
+  .animate-gradient-shift,
+  .animate-core-breathe,
+  .animate-dash-flow,
+  .animate-data-leak,
+  .animate-orbit,
+  .animate-float-blob {
+    animation: none;
+  }
+
+  .animate-fade-slide-up {
+    animation: none;
+    opacity: 1;
+  }
+
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================================================
+   PERF-LITE - tiered experience for older hardware
+   Capable phones (iOS 16+ on A12+, Android with 6+ cores) get the full
+   motion composition: cosmic canvases, backdrop-blur nav, animated
+   blur on hero words. Older devices match `html.perf-lite` (set by the
+   inline head script in BaseLayout.astro) and fall through to a
+   slimmed-down version: no backdrop-filter recomposition, no infinite
+   chrome pulses, no animated filter:blur. Visual identity stays
+   identical — typography, layout, color all unchanged.
+   ============================================================================ */
+
+html.perf-lite .backdrop-blur-xl {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background-color: rgb(10 10 12 / 0.94);
+}
+html.perf-lite .backdrop-blur-3xl {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html.perf-lite .animate-glow-pulse,
+html.perf-lite .animate-pulse,
+html.perf-lite .animate-ping,
+html.perf-lite .animate-float-blob,
+html.perf-lite .animate-nebula-pulse {
+  animation: none;
+}

@@ -1,0 +1,33 @@
+# Capsule Explorer
+
+> A browser-native viewer for qp-capsule hashchains. Every action an AI agent
+> takes is sealed into a capsule (six sections: trigger, context, reasoning,
+> authority, execution, outcome), hash-linked to the previous one, and signed.
+> The explorer re-verifies the whole chain in your browser, offline, with no
+> backend and no trust required.
+
+## What it proves
+
+- Each capsule is content-hashed with SHA3-256 over canonical JSON.
+- Each hash is signed with Ed25519 (optionally ML-DSA-65 post-quantum).
+- Each capsule links to the previous capsule's hash, forming a tamper-evident chain.
+- Reorder, edit, or drop any capsule and verification fails at the exact break point.
+
+## How verification works here
+
+The page recomputes SHA3-256 over the exact canonical bytes, verifies the Ed25519
+signature against the chain's public key, and checks previous-hash linkage and
+sequence order. All client-side. The "Tamper test" mutates one byte to show the
+chain break in real time.
+
+## Key concepts
+
+- Capsule: an immutable, signed record of one agent action.
+- Hashchain: capsules linked by previous_hash, sequence-ordered.
+- Seal: SHA3-256 hash + Ed25519 signature, applied at creation time.
+
+## Links
+
+- Explorer: https://capsules.quantumpipes.com/
+- Quantum Pipes: https://www.quantumpipes.com/
+- Capsule Protocol overview: https://www.quantumpipes.com/platform/capsule

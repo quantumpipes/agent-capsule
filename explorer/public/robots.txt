@@ -1,0 +1,33 @@
+# https://capsules.quantumpipes.com/robots.txt
+
+User-agent: *
+Allow: /
+Disallow: /404
+
+# AI crawlers and answer engines are explicitly welcomed.
+# Sovereign, verifiable AI is the thesis; being cited by LLMs is how it travels.
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot
+Allow: /
+
+Sitemap: https://capsules.quantumpipes.com/sitemap-index.xml

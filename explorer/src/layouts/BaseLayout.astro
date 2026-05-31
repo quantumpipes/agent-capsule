@@ -1,0 +1,93 @@
+---
+import "@/styles/global.css";
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const SITE = "https://capsules.quantumpipes.com";
+const {
+  title = "Capsule Explorer: Verify Every AI Decision",
+  description = "Navigate and cryptographically verify qp-capsule hashchains. SHA3-256 + Ed25519, re-verified in your browser, fully offline. No backend, no trust required.",
+} = Astro.props;
+
+const canonical = new URL(Astro.url.pathname, SITE).href;
+
+const schema = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": `${SITE}/#organization`,
+      name: "Quantum Pipes",
+      url: "https://www.quantumpipes.com",
+      sameAs: ["https://www.quantumpipes.com"],
+    },
+    {
+      "@type": "WebSite",
+      "@id": `${SITE}/#website`,
+      url: SITE,
+      name: "Capsule Explorer",
+      description,
+      publisher: { "@id": `${SITE}/#organization` },
+    },
+    {
+      "@type": "WebApplication",
+      "@id": `${SITE}/#app`,
+      name: "Capsule Explorer",
+      url: SITE,
+      applicationCategory: "SecurityApplication",
+      operatingSystem: "Any (browser)",
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      featureList: [
+        "Navigate qp-capsule hashchains",
+        "Expand six-section capsule anatomy",
+        "Client-side SHA3-256 + Ed25519 verification",
+        "Tamper detection",
+      ],
+      publisher: { "@id": `${SITE}/#organization` },
+    },
+  ],
+};
+---
+
+<!doctype html>
+<html lang="en" class="scroll-smooth">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0a0a0c" />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="preload" href="/fonts/outfit-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Capsule Explorer" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={`${SITE}/og.png`} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={`${SITE}/og.png`} />
+
+    <script is:inline type="application/ld+json" set:html={JSON.stringify(schema)} />
+  </head>
+  <body class="min-h-svh bg-surface-0 text-slate-100 font-body antialiased">
+    <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:rounded-lg focus:bg-primary-500 focus:px-4 focus:py-2 focus:text-surface-0">Skip to content</a>
+    <slot name="nav" />
+    <main id="main">
+      <slot />
+    </main>
+  </body>
+</html>

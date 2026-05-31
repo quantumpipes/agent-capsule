@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Node / Astro (explorer)
+explorer/node_modules/
+explorer/dist/
+explorer/.astro/
+explorer/.dev/
+
+# Generated verification bundle (regenerate with `npm run export`)
+explorer/public/data/
+
+# OS
+.DS_Store
+
+# Local capsule data must never be committed (it's your real session history)
+*.db
+*.checkpoint.json

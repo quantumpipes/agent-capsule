@@ -1,0 +1,5 @@
+Contact: mailto:hello@quantumpipes.com
+Preferred-Languages: en
+Canonical: https://capsules.quantumpipes.com/.well-known/security.txt
+Policy: https://www.quantumpipes.com/security
+Expires: 2027-01-01T00:00:00.000Z

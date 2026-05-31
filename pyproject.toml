@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "claude-capsule"
+version = "0.1.0"
+description = "Tamper-evident audit trail for Claude Code sessions: a hook seals every conversation into a SHA3-256 + Ed25519 hashchain you can verify in the browser, offline."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+keywords = ["claude", "claude-code", "audit", "hashchain", "ed25519", "sha3", "provenance"]
+dependencies = [
+    "PyNaCl>=1.5.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+claude-capsule = "claude_capsule.cli:main"
+claude-capsule-hook = "claude_capsule.hook:main"
+
+[project.urls]
+Homepage = "https://github.com/quantumpipes/claude-capsule"
+Repository = "https://github.com/quantumpipes/claude-capsule"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/claude_capsule"]

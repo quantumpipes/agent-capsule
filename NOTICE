@@ -1,0 +1,20 @@
+claude-capsule
+Copyright 2026 Quantum Pipes Technologies, LLC
+
+This product includes software developed at Quantum Pipes Technologies, LLC.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+The capsule wire format implemented here (six-section record, SHA3-256 over
+canonical JSON, Ed25519 signature over the hash hex string, hash-linked chain)
+is an independent implementation intended for interoperability. It depends only
+on PyNaCl (Ed25519) and the Python standard library.
+
+The browser verifier (explorer/) uses:
+  - @noble/hashes  (MIT) — SHA3-256, SHA-512
+  - @noble/ed25519 (MIT) — Ed25519 verification
+  - Astro, React, Tailwind CSS, motion — see explorer/package.json
