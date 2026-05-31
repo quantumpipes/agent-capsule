@@ -36,56 +36,17 @@ explorer/public/data/chains/*.json ──► Capsule Explorer (re-verifies in-br
 
 ## Install with Claude Code (copy / paste)
 
-The fastest way to install. Paste the block below into a Claude Code session and
-it will install the package, wire up the hooks, and verify the install for you.
+The fastest way to install. Paste this into a Claude Code session:
 
-````text
-Install "claude-capsule" so every one of my Claude Code sessions is sealed into a
-tamper-evident, cryptographically signed hashchain. Do all of this for me:
+```text
+Install claude-capsule by fetching and following every step in
+https://raw.githubusercontent.com/quantumpipes/claude-capsule/main/INSTALL.md
+then confirm the hooks are registered.
+```
 
-1. Install the package (try pipx first, fall back to pip --user):
-     pipx install git+https://github.com/quantumpipes/claude-capsule
-   or:
-     python3 -m pip install --user git+https://github.com/quantumpipes/claude-capsule
-   Confirm the `claude-capsule` and `claude-capsule-hook` commands are on PATH
-   (e.g. `claude-capsule --help`). If they are not, find their absolute path and
-   use that absolute path in step 2.
-
-2. Register the hook in my Claude Code settings file (~/.claude/settings.json),
-   creating the file and any missing keys if needed, and WITHOUT removing or
-   overwriting any hooks I already have. Add an entry that runs the command
-   `claude-capsule-hook` (or its absolute path from step 1) to BOTH the "Stop"
-   and "SessionEnd" hook events. The shape Claude Code expects is:
-
-     {
-       "hooks": {
-         "Stop":       [ { "hooks": [ { "type": "command", "command": "claude-capsule-hook" } ] } ],
-         "SessionEnd": [ { "hooks": [ { "type": "command", "command": "claude-capsule-hook" } ] } ]
-       }
-     }
-
-   Merge into the existing JSON. If a "Stop"/"SessionEnd" array already exists,
-   append my entry to it instead of replacing it. Validate the JSON parses
-   before saving.
-
-3. Verify the install end-to-end without waiting for a real session: pick any
-   transcript under ~/.claude/projects/**/ (a *.jsonl file), then run
-     claude-capsule-hook --transcript "<that file>" --session install-check --finalize
-   then
-     claude-capsule verify ~/.claude-capsule/chains/install-check.db --signatures
-   Report the verify result to me. Then delete the install-check chain:
-     rm -f ~/.claude-capsule/chains/install-check.db ~/.claude-capsule/chains/install-check.checkpoint.json
-
-4. Tell me: (a) that hooks are registered, (b) where my chains will be written
-   (~/.claude-capsule/chains/), and (c) the one command to browse them later:
-     git clone https://github.com/quantumpipes/claude-capsule && cd claude-capsule/explorer && npm install && npm run export && npm run dev
-
-Do not print my key material. The signing key at ~/.claude-capsule/key is private;
-only the public key is ever shared.
-````
-
-That is all most people need. The sections below are the manual path and the
-reference.
+Claude Code reads the [install guide](INSTALL.md), installs the package, wires up
+the `Stop` and `SessionEnd` hooks, verifies the install, and reports back. That is
+all most people need. The sections below are the manual path and the reference.
 
 ---
 
