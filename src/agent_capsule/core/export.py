@@ -20,7 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .paths import CHAINS_DIR
+from . import keyring
+from .paths import CHAINS_DIR, META_DB
 from .seal import Seal
 
 DEFAULT_GLOBS = [str(CHAINS_DIR / "*" / "*.db")]
@@ -62,6 +63,31 @@ def _title(capsules: list[dict[str, Any]], fallback: str) -> str:
     return fallback
 
 
+def _export_meta(out_dir: Path) -> dict[str, Any] | None:
+    """Export the machine-wide meta-chain (one capsule per sealed conversation).
+
+    Its head commits to every conversation, so the Explorer can verify the whole
+    corpus is complete: each entry records a conversation's head hash + count, to
+    cross-check against the chains actually present in the bundle.
+    """
+    if not META_DB.exists():
+        return None
+    rows = _rows(META_DB)
+    if not rows:
+        return None
+    capsules = [_export_capsule(r) for r in rows]
+    meta = {
+        "length": len(capsules),
+        "head_hash": capsules[-1]["hash"],
+        "genesis_hash": capsules[0]["hash"],
+        "all_hashes_ok": all(_hash_ok(c) for c in capsules),
+        "capsules": capsules,
+    }
+    (out_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False))
+    return {"length": meta["length"], "head_hash": meta["head_hash"],
+            "all_hashes_ok": meta["all_hashes_ok"]}
+
+
 def export_chains(db_paths: list[Path], out_dir: Path, public_key: str, fingerprint: str) -> dict:
     chains: list[dict[str, Any]] = []
     for db in db_paths:
@@ -73,6 +99,9 @@ def export_chains(db_paths: list[Path], out_dir: Path, public_key: str, fingerpr
         # never collide on a session id.
         tool = db.parent.name
         cid = f"{tool}-{db.stem}"
+        # A chain's signer is the fingerprint its capsules carry (one signer per
+        # chain in practice); the Explorer resolves it against the bundled keyring.
+        signers = {c["signed_by"] for c in capsules if c["signed_by"]}
         chains.append({
             "id": cid,
             "tool": tool,
@@ -82,23 +111,38 @@ def export_chains(db_paths: list[Path], out_dir: Path, public_key: str, fingerpr
             "head_hash": capsules[-1]["hash"],
             "genesis_hash": capsules[0]["hash"],
             "all_hashes_ok": all(_hash_ok(c) for c in capsules),
+            "signed_by": sorted(signers),
+            # When the chain began and last grew, for recency sort in the Explorer.
+            "started_at": capsules[0]["signed_at"],
+            "ended_at": capsules[-1]["signed_at"],
             "capsules": capsules,
         })
-    chains.sort(key=lambda c: c["length"], reverse=True)
+    # Newest conversation first: the head's seal time is when the chain last grew.
+    chains.sort(key=lambda c: (c["ended_at"] or "", c["length"]), reverse=True)
+
+    # Bundle every public key we can verify with, so signatures from imported or
+    # rotated keys still go green in the browser, not just our own.
+    keys = keyring.keyring_with(public_key)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     summaries = []
     for ch in chains:
         (out_dir / f"{ch['id']}.json").write_text(json.dumps(ch, ensure_ascii=False))
         summaries.append({k: ch[k] for k in
-                          ("id", "tool", "title", "length", "head_hash", "genesis_hash", "all_hashes_ok")})
+                          ("id", "tool", "title", "length", "head_hash",
+                           "genesis_hash", "all_hashes_ok", "signed_by",
+                           "started_at", "ended_at")})
+
+    meta_summary = _export_meta(out_dir)
 
     index = {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "public_key": public_key,
         "fingerprint": fingerprint,
+        "keys": keys,
         "chain_count": len(chains),
         "capsule_count": sum(c["length"] for c in chains),
+        "meta": meta_summary,
         "chains": summaries,
     }
     (out_dir / "index.json").write_text(json.dumps(index, indent=2, ensure_ascii=False))

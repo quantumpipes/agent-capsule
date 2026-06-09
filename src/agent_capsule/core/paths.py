@@ -23,6 +23,11 @@ KEY_PATH = HOME / "key"
 LOG_PATH = HOME / "hook.log"
 CHAINS_DIR = HOME / "chains"
 
+# Registry of additional public keys (fingerprint -> public-key hex) whose chains
+# this machine can verify but did not sign: imported chains, rotated keys, peers.
+# The export bundles this so the Explorer verifies every signer, not just our own.
+KNOWN_KEYS_PATH = HOME / "known_keys.json"
+
 # The meta-chain: one capsule per finalized conversation, recording its head
 # hash and capsule count. Its head commits to every conversation ever sealed.
 META_DB = HOME / "meta.db"
