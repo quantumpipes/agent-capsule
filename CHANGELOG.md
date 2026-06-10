@@ -6,6 +6,34 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-09
+
+The keyring + meta-chain release.
+
+### Added
+
+- **Multi-signer keyring.** A registry of additional public keys
+  (`~/.agent-capsule/known_keys.json`, fingerprint -> public-key hex) for chains
+  this machine can verify but did not sign: imported chains, rotated keys, peers.
+  The export bundles the whole keyring (`keys` map in `index.json`) plus each
+  chain's `signed_by`, so the Explorer verifies every signer offline, not just
+  the local key. New module `agent_capsule.core.keyring`.
+- **Meta-chain in the export.** `export` now writes `meta.json` (the
+  chain-of-conversations) and a `meta` summary in `index.json`, so the Explorer
+  can confirm the whole corpus is complete (delete or truncate any conversation
+  and its recorded seal no longer matches).
+- **Per-chain recency dates.** Each chain summary carries `started_at` /
+  `ended_at`; chains export newest-first.
+- **`scripts/import_qp_chains.py`.** Import legacy qp_capsule chains
+  byte-for-byte (every hash re-verified, `data -> canonical` rename), register
+  the legacy signing key in the keyring, and rebuild the meta-chain.
+
+### Tests
+
+- Added `test_keyring`, `test_export` (keyring, dates, signer, meta-chain), and
+  `test_import_qp` (round-trip hash/link preservation, idempotency, tamper
+  detection). A `conftest.ac_home` fixture isolates all storage paths.
+
 ## [0.2.0] - 2026-05-31
 
 The multi-tool release. Renamed from claude-capsule to agent-capsule.

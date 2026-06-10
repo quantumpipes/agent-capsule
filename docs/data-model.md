@@ -146,6 +146,44 @@ the next capsule's `previous_hash`, which breaks the chain at exactly that point
 That is the whole guarantee, and you can check it yourself: see
 [verify-it-yourself.md](verify-it-yourself.md).
 
+## The export bundle
+
+`agent-capsule export` turns the on-disk chains into the static JSON the
+[Capsule Explorer](https://github.com/quantumpipes/capsule-explorer) verifies.
+Beyond one file per chain (each carrying the exact `canonical` bytes per
+capsule), the bundle's `index.json` carries:
+
+```jsonc
+{
+  "public_key": "0edc0349...",         // this machine's Ed25519 signing key
+  "fingerprint": "0edc03491c799def",   // first 16 hex of public_key
+  "keys": {                            // the keyring: fingerprint -> public key
+    "0edc03491c799def": "0edc0349...", //   our own key
+    "7879553cfff1a978": "7879553c..."  //   a registered known key (imported / rotated / peer)
+  },
+  "meta": { "length": 127, "head_hash": "91a8057c...", "all_hashes_ok": true },
+  "chains": [
+    { "id": "claude-code-<session>", "signed_by": ["7879553cfff1a978"],
+      "started_at": "...", "ended_at": "...", "length": 2526, /* ... */ }
+  ]
+}
+```
+
+A capsule's `signed_by` is a 16-char fingerprint, not a full key, so verifying a
+signature needs the full public key. Our own key is always known; keys for chains
+we did not sign (an imported chain, a rotated key, a peer) are registered in
+`~/.agent-capsule/known_keys.json` and bundled into `keys`. The Explorer resolves
+each capsule's key by `signed_by` and verifies every signer offline.
+
+### The meta-chain
+
+`meta.json` is a second hashchain with one capsule per sealed conversation,
+recording that conversation's head hash and capsule count (in `outcome.result`).
+Because it is itself hash-linked, its single head commits to every conversation
+ever sealed, closing the two gaps a per-conversation chain cannot: deleting a
+whole conversation and truncating a conversation's tail. Verify it with
+`agent-capsule verify-meta`.
+
 ## A full capsule
 
 ```jsonc
